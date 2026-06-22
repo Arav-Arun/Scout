@@ -1,0 +1,247 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme {
+  --color-brand: #2f6bff;
+  --color-brand-dark: #1d4ed8;
+  --color-brand-50: #eef3ff;
+  --color-brand-100: #e0eaff;
+  --color-ink: #0f1729;
+  --color-ink-soft: #334155;
+  --color-ink-faint: #64748b;
+  --color-line: #e2e8f0;
+  --color-canvas: #f8fafc;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  /* Clean, solid, minimalistic light-mode background */
+  background-color: #f3f4f6;
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+a,
+[role="button"] {
+  cursor: pointer;
+}
+
+button:disabled,
+[role="button"]:disabled {
+  cursor: not-allowed;
+}
+
+
+/* ── Dark mode ─────────────────────────────────────────────────────────────── */
+[data-theme="dark"] body {
+  /* Clean, solid, minimalistic dark-mode background (Slightly lighter shade of grey) */
+  background-color: #2c2e33;
+  color: #f8fafc;
+}
+
+[data-theme="dark"] {
+  --color-ink: #f8fafc;
+  --color-ink-soft: #cbd5e1;
+  --color-ink-faint: #94a3b8;
+  --color-line: rgba(255, 255, 255, 0.08);
+  --color-canvas: #202124;
+  --color-brand: #0DB8AA;
+  --color-brand-dark: #0C8790;
+  --color-brand-50: rgba(13, 184, 170, 0.1);
+  --color-brand-100: rgba(13, 184, 170, 0.16);
+}
+
+/* ── Frosted-glass surfaces (dark) ────────────────────────────────────────── */
+[data-theme="dark"] .glass {
+  background: linear-gradient(135deg, rgba(16, 16, 24, 0.45) 0%, rgba(10, 10, 16, 0.35) 100%);
+  backdrop-filter: blur(32px) saturate(180%);
+  -webkit-backdrop-filter: blur(32px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 0 8px 32px -16px rgba(0, 0, 0, 0.4);
+}
+[data-theme="dark"] .glass-chrome {
+  background: rgba(22, 22, 32, 0.62);
+  backdrop-filter: blur(35px) saturate(190%);
+  -webkit-backdrop-filter: blur(35px) saturate(190%);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+}
+[data-theme="dark"] .glass-chrome-opaque {
+  background: rgba(22, 22, 32, 0.96);
+  backdrop-filter: blur(40px) saturate(190%);
+  -webkit-backdrop-filter: blur(40px) saturate(190%);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+}
+[data-theme="dark"] .glass-card {
+  background: linear-gradient(135deg, rgba(28, 28, 38, 0.48) 0%, rgba(16, 16, 24, 0.35) 100%);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 24px -12px rgba(0, 0, 0, 0.3);
+}
+[data-theme="dark"] .soft {
+  background: rgba(13, 184, 170, 0.06);
+}
+[data-theme="dark"] .field {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+/* ── Frosted-glass surfaces (light) ────────────────────────────────────────── */
+.glass {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.45) 0%, rgba(255, 255, 255, 0.25) 100%);
+  backdrop-filter: blur(32px) saturate(180%);
+  -webkit-backdrop-filter: blur(32px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  box-shadow: 0 8px 32px -16px rgba(15, 23, 41, 0.08);
+}
+.glass-chrome {
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(35px) saturate(190%);
+  -webkit-backdrop-filter: blur(35px) saturate(190%);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+}
+.glass-chrome-opaque {
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(40px) saturate(190%);
+  -webkit-backdrop-filter: blur(40px) saturate(190%);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+.glass-card {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.52) 0%, rgba(255, 255, 255, 0.35) 100%);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 8px 24px -12px rgba(15, 23, 41, 0.1);
+}
+.soft {
+  background: rgba(47, 107, 255, 0.04);
+}
+.field {
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.6);
+}
+
+/* Thin, unobtrusive scrollbars to match the clean aesthetic. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd2e0 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #cbd2e0;
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #aeb7c9;
+}
+[data-theme="dark"] * {
+  scrollbar-color: #5f6368 transparent;
+}
+[data-theme="dark"] *::-webkit-scrollbar-thumb {
+  background: #5f6368;
+}
+[data-theme="dark"] *::-webkit-scrollbar-thumb:hover {
+  background: #9aa0a6;
+}
+
+/* ── Animations (snappy durations) ─────────────────────────────────────────── */
+@keyframes scout-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade-up {
+  animation: scout-fade-up 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes scout-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.animate-soft-pulse {
+  animation: scout-pulse 1.4s ease-in-out infinite;
+}
+
+/* ── Resize handle ─────────────────────────────────────────────────────────── */
+.resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 15;
+  transition: background 0.15s;
+}
+.resize-handle:hover,
+.resize-handle:active {
+  background: var(--color-brand);
+  opacity: 0.4;
+}
+.resize-handle:active {
+  opacity: 0.6;
+}
+
+/* ── Mobile safe area ──────────────────────────────────────────────────────── */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ── Dynamic layout ─────────────────────────────────────────────────────────
+   These rules own the actual CSS; components only inject the runtime value via a
+   CSS custom property (e.g. style={{ "--sidebar-w": "420px" }}). This keeps all
+   style declarations in this file and out of the TSX.                          */
+.scout-sidebar {
+  width: var(--sidebar-w, 420px);
+}
+.hero-grid {
+  grid-template-columns: repeat(var(--hero-cols, 1), minmax(0, 1fr));
+}
+.chart-grid {
+  grid-template-columns: var(--chart-cols, 1fr);
+}
+.echart-canvas {
+  width: 100%;
+  height: var(--echart-h, 240px);
+}
+
+/* ── Performance hints ─────────────────────────────────────────────────────── */
+.glass-card,
+.glass,
+.glass-chrome {
+  will-change: auto;
+  contain: layout style;
+}
+
+/* Inline code styling inside agent narration. */
+.narration code {
+  background: var(--color-brand-50);
+  color: var(--color-brand-dark);
+  padding: 0.06rem 0.34rem;
+  border-radius: 0.34rem;
+  font-size: 0.82em;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-weight: 500;
+}
+
+[data-theme="dark"] .narration code {
+  background: rgba(13, 184, 170, 0.12);
+  color: #5ee5d8;
+}
