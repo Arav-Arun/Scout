@@ -130,14 +130,46 @@ export function schemaBlock(infos: TableInfo[]): string {
     .join("\n\n");
 }
 
-/** Results gathered so far, trimmed for the model's context. */
+/**
+ * Per-numeric-column sum/min/max over a result's rows, computed in code so the model never
+ * has to add up rows itself (that hand-summing is how it produced a total SMALLER than one of
+ * its parts). For a complete breakdown the column `sum` IS the grand total and `max` is the
+ * largest part - both exact and mutually consistent.
+ */
+function columnAggregates(rows: Record<string, unknown>[], rowCount: number): string {
+  if (!rows.length) return "";
+  const parts: string[] = [];
+  for (const k of Object.keys(rows[0])) {
+    let sum = 0, min = Infinity, max = -Infinity, ok = true, seen = 0;
+    for (const row of rows) {
+      const v = row[k];
+      const num =
+        typeof v === "number" ? v
+        : typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v)) ? Number(v)
+        : null;
+      if (num === null) { ok = false; break; } // non-numeric column - skip
+      sum += num; seen++; if (num < min) min = num; if (num > max) max = num;
+    }
+    if (ok && seen) parts.push(`${k}: sum=${sum}, min=${min}, max=${max}`);
+  }
+  if (!parts.length) return "";
+  // rowCount is the true count returned; r.rows is capped at 40. Flag partial sums clearly.
+  const complete = rowCount <= rows.length;
+  const scope = complete
+    ? `all ${rowCount} returned rows`
+    : `ONLY the first ${rows.length} of ${rowCount} rows (NOT a grand total)`;
+  return `\nColumn aggregates over ${scope} - use these, do NOT add rows yourself: ${parts.join("; ")}`;
+}
+
+/** Results gathered so far, trimmed for the model's context (+ exact column aggregates). */
 export function resultsBlock(results: AnalyzeResult[]): string {
   if (!results.length) return "(no queries run yet)";
   return results
     .map((r, i) => {
       if (r.error) return `#${i + 1} ${r.purpose}\nSQL: ${r.sql}\nERROR: ${r.error}`;
       const sample = JSON.stringify(r.rows.slice(0, 25));
-      return `#${i + 1} ${r.purpose} (${r.rowCount} rows)\nSQL: ${r.sql}\nRows: ${sample}`;
+      const aggs = columnAggregates(r.rows, r.rowCount);
+      return `#${i + 1} ${r.purpose} (${r.rowCount} rows)\nSQL: ${r.sql}\nRows: ${sample}${aggs}`;
     })
     .join("\n\n");
 }
