@@ -271,7 +271,7 @@ export default function ChatPanel({
                       : "border-line text-ink-soft hover:bg-black/5 dark:hover:bg-white/10"
                   }`}
                 >
-                  <SparkIcon className="h-3 w-3" />
+                  <SparkIcon className="h-4 w-4 shrink-0 text-brand" />
                   View dashboard v{turn.versionIndex + 1}
                 </button>
               )}

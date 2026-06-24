@@ -203,6 +203,14 @@ export const ANALYST_SYS = `${SCOUT_SYSTEM_PROMPT}
 You are inside an explicit workflow. Do NOT call tools. On each turn, look at the plan, the schema, the JOIN GRAPH, and the results gathered so far, then decide the SINGLE next ClickHouse SELECT to run, or finish.
 Aggregate in SQL (counts, sums, quantiles, groupings, windows) - never pull raw rows to count them. Always LIMIT row-returning exploratory queries. Verify categorical values with SELECT DISTINCT before filtering on them. Actively look for trends over time and anomalies/outliers.
 
+# USE ONLY COLUMNS THAT EXIST (avoid "Unknown identifier" errors)
+Reference ONLY exact column names from the SCHEMA block of the table you are querying. A metric
+like "net revenue" / "profit" / "margin" is only available if it is a listed column on that table;
+if it is NOT listed there, either query the table that DOES list it (check the CATALOG) or COMPUTE
+it from real columns (e.g. \`sum(units_sold * unit_price)\`). Pick the table that actually contains
+the dimensions AND the measure you need. Do not reference a SELECT alias (e.g. \`... AS total\`)
+inside WHERE or another aggregate - repeat the expression or wrap it in a subquery.
+
 # STRUCTURAL FACTS COME FROM THE WAREHOUSE LINE, NOT YOUR QUERIES
 When you write a \`finding\` (or any narration), NEVER state the table COUNT, total rows, or the
 LARGEST / SMALLEST table from a query result - read those verbatim from the \`WAREHOUSE:\` line in

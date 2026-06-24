@@ -200,15 +200,41 @@ function checkColumns(sql: string, idx: ColumnIndex, sub: SubGraph): string | nu
   return null;
 }
 
-/** Append a graph-grounded hint to a ClickHouse "unknown column" error, if we can. */
-function enrichColumnError(message: string, sql: string, idx: ColumnIndex, sub: SubGraph): string {
+/**
+ * Append a grounded hint to a ClickHouse "unknown identifier" error so the retry is
+ * actionable. Resolves the offending identifier against (a) the in-scope inspected tables
+ * and (b) the FULL catalog, so it can tell the analyst "that column actually lives on table
+ * X - query/join X" even when the planner seeded the wrong table (the `net_revenue` case).
+ */
+function enrichColumnError(message: string, sql: string, idx: ColumnIndex, sub: SubGraph, cat: Catalog): string {
   const m = message.match(/(?:Unknown (?:expression )?identifier|Missing columns?:?)\s*['"`]?([A-Za-z_]\w*)['"`]?/i);
   const col = m?.[1];
   if (!col) return message;
-  const owners = idx.colOwners.get(col);
-  if (!owners?.length) return message;
+
   const inScope = new Set(aliasMap(sql, idx.tableCols).values());
-  return `${message}  Hint: column \`${col}\` lives on \`${owners[0]}\`.${joinSuggestion(sub, owners[0], inScope.size ? inScope : new Set(idx.tableCols.keys()))}`;
+  const owners = idx.colOwners.get(col) ?? []; // inspected tables that have the column
+
+  // 1) Known on an inspected table the query didn't actually use -> join it in.
+  const inspectedNotUsed = owners.filter((o) => !inScope.has(o));
+  if (inspectedNotUsed.length) {
+    return `${message}  Hint: column \`${col}\` lives on \`${inspectedNotUsed[0]}\`.${joinSuggestion(sub, inspectedNotUsed[0], inScope.size ? inScope : new Set(idx.tableCols.keys()))} The warehouse has no foreign keys, so JOIN to read it.`;
+  }
+
+  // 2) A real column on a catalog table that was never inspected (planner seeded the wrong
+  //    table) -> point the analyst straight at the table that has the metric.
+  const catOwners = cat.tables.filter((t) => t.columns.some((c) => c.name === col)).map((t) => t.name);
+  const elsewhere = catOwners.filter((t) => !inScope.has(t));
+  if (elsewhere.length) {
+    return `${message}  Hint: \`${col}\` IS a real column, but on \`${elsewhere.slice(0, 3).join("`, `")}\` - not on the table your query uses. Query that table instead (it has \`${col}\`).`;
+  }
+
+  // 3) The column is on a table already in the query -> almost always an alias-scope mistake.
+  if (owners.length) {
+    return `${message}  Hint: \`${col}\` exists on \`${owners[0]}\`, already in your query. If you wrote \`... AS ${col}\`, do NOT reference that alias inside WHERE or another aggregate - repeat the expression or wrap the query in a subquery.`;
+  }
+
+  // 4) Unknown everywhere -> an invented/derived metric.
+  return `${message}  Hint: \`${col}\` is not a column on any table. Do NOT assume a metric column exists - use an exact column from the SCHEMA, or COMPUTE the metric from real columns.`;
 }
 
 // ── PHASE 4: ANALYZE LOOP ────────────────────────────────────────────────────
@@ -268,7 +294,7 @@ export async function analyze(plan: Plan, schemas: TableInfo[], sub: SubGraph, c
       // Enrich a ClickHouse "unknown column" error with the table that actually owns
       // the column + the join key, so the retry is grounded (catches the unqualified
       // case the pre-flight deliberately leaves alone).
-      const msg = enrichColumnError(errMsg(e), decision.sql, colIndex, sub);
+      const msg = enrichColumnError(errMsg(e), decision.sql, colIndex, sub, cat);
       results.push({ purpose, sql: decision.sql, rows: [], rowCount: 0, error: msg });
       emit({ type: "step", id, kind: "query", status: "error", label: "Query failed", detail: msg.slice(0, 140) });
     }
