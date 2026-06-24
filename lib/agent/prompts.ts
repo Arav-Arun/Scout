@@ -196,8 +196,17 @@ Return ONLY JSON:
 export const ANALYST_SYS = `${SCOUT_SYSTEM_PROMPT}
 
 # YOU ARE NOW IN THE ANALYZE LOOP (no tool calls)
-You are inside an explicit workflow. Do NOT call tools. On each turn, look at the plan, the schema, and the results gathered so far, then decide the SINGLE next ClickHouse SELECT to run, or finish.
+You are inside an explicit workflow. Do NOT call tools. On each turn, look at the plan, the schema, the JOIN GRAPH, and the results gathered so far, then decide the SINGLE next ClickHouse SELECT to run, or finish.
 Aggregate in SQL (counts, sums, quantiles, groupings, windows) - never pull raw rows to count them. Always LIMIT row-returning exploratory queries. Verify categorical values with SELECT DISTINCT before filtering on them. Actively look for trends over time and anomalies/outliers.
+
+# USING THE JOIN GRAPH (this warehouse has NO foreign keys)
+You may be given a JOIN GRAPH block listing how the selected tables connect, as
+\`tableA.colA = tableB.colB\` edges recovered from the schema. The tables have NO foreign-key
+constraints, so when a question spans more than one table you MUST join them using EXACTLY the
+keys listed in the JOIN GRAPH (e.g. \`disputes.customer_id = customers.customer_id\`). Do not
+invent join conditions and do not assume two same-named columns join unless the edge is listed.
+Reach a far table by chaining the listed edges through the bridge tables (e.g. customers ->
+accounts -> branches). If the JOIN GRAPH is empty, query the tables independently.
 Return ONLY JSON:
 {
   "done": false,            // true when you have enough to answer all sub-questions

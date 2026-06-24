@@ -27,9 +27,11 @@ import {
   SpinnerIcon,
   ChartIcon,
   CodeIcon,
+  GraphIcon,
 } from "./icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { PropertySearchIcon } from "@hugeicons/core-free-icons";
+import GraphModal from "./GraphModal";
 
 // Render narration with inline `code` and **bold** support.
 function Narration({ text }: { text: string }) {
@@ -75,6 +77,7 @@ export default function ChatPanel({
 }) {
   const [draft, setDraft] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [graphOpen, setGraphOpen] = useState(false);
   const [dbInfo, setDbInfo] = useState<{ host: string; database: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -133,6 +136,8 @@ export default function ChatPanel({
         }}
       />
 
+      <GraphModal open={graphOpen} onClose={() => setGraphOpen(false)} />
+
       {/* header */}
       <div className={`p-3 md:p-3.5 pb-1 shrink-0 ${settingsOpen ? "relative z-40" : "relative z-10"}`}>
         <div className="glass-chrome flex h-14 items-center gap-2.5 rounded-2xl border border-line px-4 shadow-sm relative">
@@ -143,6 +148,13 @@ export default function ChatPanel({
           </div>
 
           <div className="ml-auto flex items-center gap-1">
+            <button
+              onClick={() => setGraphOpen(true)}
+              title="Knowledge graph"
+              className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-black/5 hover:text-ink-soft dark:hover:bg-white/10"
+            >
+              <GraphIcon className="h-5 w-5" />
+            </button>
             <button
               ref={settingsButtonRef}
               onClick={() => setSettingsOpen((v) => !v)}
@@ -289,7 +301,7 @@ export default function ChatPanel({
               }
             }}
             rows={1}
-            placeholder="Ask your data anything, e.g. which products are on the decline?"
+            placeholder="Ask your data anything..."
             className="max-h-32 flex-1 resize-none bg-transparent py-1.5 text-[13.5px] md:py-2 md:text-[14px] text-ink outline-none placeholder:text-ink-faint disabled:opacity-50 disabled:cursor-not-allowed"
           />
           <button
@@ -356,8 +368,9 @@ function EmptyState({ onPick, onUploadClick }: { onPick: (t: string) => void; on
 
 type Step = Extract<AgentBlock, { type: "step" }>;
 
-const KIND_ICON: Record<"discover" | "inspect" | "query" | "think", React.ComponentType<{ className?: string }>> = {
+const KIND_ICON: Record<"discover" | "graph" | "inspect" | "query" | "think", React.ComponentType<{ className?: string }>> = {
   discover: DatabaseIcon,
+  graph: GraphIcon,
   inspect: CodeIcon,
   query: ChartIcon,
   think: ChartIcon,

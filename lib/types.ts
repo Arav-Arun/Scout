@@ -55,7 +55,7 @@ export interface ExecutedQuery {
 
 // ── Streaming events (NDJSON, one JSON object per line) ──────────────────────
 
-export type StepKind = "discover" | "inspect" | "query" | "think";
+export type StepKind = "discover" | "graph" | "inspect" | "query" | "think";
 export type StepStatus = "running" | "done" | "error";
 
 /** A reasoning step shown as a chip in the chat panel. */

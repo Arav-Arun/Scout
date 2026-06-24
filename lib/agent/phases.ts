@@ -13,6 +13,7 @@
 
 import { describeTable, runSelect, type TableInfo } from "../db/clickhouse";
 import { getCatalog, type Catalog } from "../db/catalog";
+import { getSchemaGraph, retrieveSubgraph, formatGraphForPrompt, summarizeSubgraph, type SubGraph } from "../graph/schema-graph";
 import { llmJSON } from "./llm";
 import { PLANNER_SYS, ANALYST_SYS, SYNTH_SYS } from "./prompts";
 import type { ChatTurn, ExecutedQuery, Dashboard } from "../types";
@@ -30,7 +31,9 @@ import {
 } from "./context";
 
 const MAX_QUERIES = 8;
-const MAX_TABLES = 4;
+// The planner seeds a few tables; the schema graph then expands that set with the
+// bridge/dimension tables needed to join them, so INSPECT describes a wider set.
+const MAX_INSPECT = 8;
 
 // ── PHASE 1: DISCOVER (cached) ───────────────────────────────────────────────
 
@@ -71,12 +74,36 @@ export async function planAnalysis(question: string, history: ChatTurn[], cat: C
   return plan;
 }
 
-// ── PHASE 3: INSPECT ─────────────────────────────────────────────────────────
+// ── PHASE 3a: RELATE (Graph RAG retrieval over the schema) ───────────────────
+
+/**
+ * Walk the schema graph from the planner's seed tables to retrieve the connected
+ * subgraph: the seeds plus the bridge/dimension tables needed to join them, plus the
+ * exact join keys (the warehouse has no foreign keys). Returns the expanded table set
+ * to inspect and the JOIN GRAPH text the analyst reads. Degrades to just the seeds if
+ * the graph is unavailable, so the pipeline never regresses.
+ */
+export async function relate(plan: Plan, emit: Emit): Promise<SubGraph> {
+  const id = stepId();
+  emit({ type: "step", id, kind: "graph", status: "running", label: "Walking the schema graph" });
+  try {
+    const graph = await getSchemaGraph();
+    const sub = retrieveSubgraph(graph, plan.tables || [], { maxTables: MAX_INSPECT });
+    emit({ type: "step", id, kind: "graph", status: "done", label: "Mapped table relationships", detail: summarizeSubgraph(sub) });
+    return sub;
+  } catch {
+    emit({ type: "step", id, kind: "graph", status: "error", label: "Schema graph unavailable" });
+    const seeds = plan.tables || [];
+    return { seeds, tables: seeds, edges: [] };
+  }
+}
+
+// ── PHASE 3b: INSPECT ────────────────────────────────────────────────────────
 
 /** Fetch exact typed schemas for the chosen tables (validated against the catalog). */
-export async function inspect(plan: Plan, cat: Catalog, emit: Emit): Promise<TableInfo[]> {
+export async function inspect(tableNames: string[], cat: Catalog, emit: Emit): Promise<TableInfo[]> {
   const names = new Set(cat.tables.map((t) => t.name));
-  let chosen = (plan.tables || []).filter((t) => names.has(t)).slice(0, MAX_TABLES);
+  let chosen = (tableNames || []).filter((t) => names.has(t)).slice(0, MAX_INSPECT);
   if (!chosen.length) chosen = cat.tables.slice(0, 2).map((t) => t.name);
 
   const id = stepId();
@@ -94,6 +121,95 @@ export async function inspect(plan: Plan, cat: Catalog, emit: Emit): Promise<Tab
   return schemas;
 }
 
+// ── Column-resolution guard (uses the schema graph to fix wrong-table refs) ──
+// The warehouse has no foreign keys, so the analyst sometimes selects a column from a
+// table that doesn't have it (the column lives on a parent table reachable by a join).
+// These helpers turn that into an actionable hint - which table owns the column and
+// the exact join key from the retrieved subgraph - either before the query runs
+// (checkColumns) or by enriching ClickHouse's own error (enrichColumnError).
+
+interface ColumnIndex {
+  /** table -> set of its column names. */
+  tableCols: Map<string, Set<string>>;
+  /** column name -> the in-scope tables that actually have it. */
+  colOwners: Map<string, string[]>;
+}
+
+function buildColumnIndex(schemas: TableInfo[]): ColumnIndex {
+  const tableCols = new Map<string, Set<string>>();
+  const colOwners = new Map<string, string[]>();
+  for (const t of schemas) {
+    tableCols.set(t.name, new Set(t.columns.map((c) => c.name)));
+    for (const c of t.columns) {
+      const owners = colOwners.get(c.name) ?? [];
+      owners.push(t.name);
+      colOwners.set(c.name, owners);
+    }
+  }
+  return { tableCols, colOwners };
+}
+
+/** Resolve table aliases (and bare table names) from the query's FROM / JOIN clauses. */
+function aliasMap(sql: string, tableCols: Map<string, Set<string>>): Map<string, string> {
+  const out = new Map<string, string>();
+  const re = /\b(?:FROM|JOIN)\s+`?([A-Za-z_]\w*)`?(?:\s+(?:AS\s+)?`?([A-Za-z_]\w*)`?)?/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(sql)) !== null) {
+    const table = m[1];
+    if (!tableCols.has(table)) continue; // not an in-scope base table (e.g. a subquery)
+    out.set(table, table);
+    const alias = m[2];
+    if (alias && !/^(on|using|where|group|order|limit|left|right|inner|outer|join|as|prewhere|having|settings|format)$/i.test(alias)) {
+      out.set(alias, table);
+    }
+  }
+  return out;
+}
+
+/** The join key (from the retrieved subgraph) connecting `owner` to any in-scope table. */
+function joinSuggestion(sub: SubGraph, owner: string, inScope: Set<string>): string {
+  const e = sub.edges.find((e) => (e.a === owner && inScope.has(e.b)) || (e.b === owner && inScope.has(e.a)));
+  return e ? ` Join ${e.a}.${e.aCol} = ${e.b}.${e.bCol}.` : " Join it in using the JOIN GRAPH.";
+}
+
+/**
+ * Pre-flight: flag an alias-qualified reference `t.col` whose table `t` is in scope but
+ * lacks `col`, when another in-scope table DOES have it. Returns a hint, or null if the
+ * query looks fine. Deliberately conservative (qualified refs only) so it never rejects
+ * a valid query - unqualified/ambiguous refs are left to ClickHouse + enrichColumnError.
+ */
+function checkColumns(sql: string, idx: ColumnIndex, sub: SubGraph): string | null {
+  const aliases = aliasMap(sql, idx.tableCols);
+  if (!aliases.size) return null;
+  const seen = new Set<string>();
+  const qref = /\b([A-Za-z_]\w*)\.([A-Za-z_]\w*)\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = qref.exec(sql)) !== null) {
+    const [, q, col] = m;
+    const table = aliases.get(q);
+    if (!table || col === "*") continue;
+    if (idx.tableCols.get(table)?.has(col)) continue; // valid reference
+    const owners = (idx.colOwners.get(col) ?? []).filter((o) => o !== table);
+    if (!owners.length) continue; // unknown everywhere - could be a computed alias; let CH judge
+    const key = `${table}.${col}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    return `Column \`${col}\` is not on table \`${table}\`; it lives on \`${owners[0]}\`.${joinSuggestion(sub, owners[0], new Set([table]))} The warehouse has no foreign keys, so you must JOIN to read it.`;
+  }
+  return null;
+}
+
+/** Append a graph-grounded hint to a ClickHouse "unknown column" error, if we can. */
+function enrichColumnError(message: string, sql: string, idx: ColumnIndex, sub: SubGraph): string {
+  const m = message.match(/(?:Unknown (?:expression )?identifier|Missing columns?:?)\s*['"`]?([A-Za-z_]\w*)['"`]?/i);
+  const col = m?.[1];
+  if (!col) return message;
+  const owners = idx.colOwners.get(col);
+  if (!owners?.length) return message;
+  const inScope = new Set(aliasMap(sql, idx.tableCols).values());
+  return `${message}  Hint: column \`${col}\` lives on \`${owners[0]}\`.${joinSuggestion(sub, owners[0], inScope.size ? inScope : new Set(idx.tableCols.keys()))}`;
+}
+
 // ── PHASE 4: ANALYZE LOOP ────────────────────────────────────────────────────
 
 /**
@@ -101,10 +217,13 @@ export async function inspect(plan: Plan, cat: Catalog, emit: Emit): Promise<Tab
  * repeat until the model finishes. Returns the gathered results plus the SQL log
  * (for "Export SQL").
  */
-export async function analyze(plan: Plan, schemas: TableInfo[], cat: Catalog, model: string, emit: Emit): Promise<{ results: AnalyzeResult[]; queries: ExecutedQuery[] }> {
+export async function analyze(plan: Plan, schemas: TableInfo[], sub: SubGraph, cat: Catalog, model: string, emit: Emit): Promise<{ results: AnalyzeResult[]; queries: ExecutedQuery[] }> {
   const results: AnalyzeResult[] = [];
   const queries: ExecutedQuery[] = [];
   const planText = planBlock(plan);
+  const graphText = formatGraphForPrompt(sub);
+  const graphBlock = graphText ? `\n\n${graphText}` : "";
+  const colIndex = buildColumnIndex(schemas);
   const catalogText = `CATALOG (all tables):\n${compactCatalog(cat.tables, cat.rowCounts)}`;
 
   for (let i = 0; i < MAX_QUERIES; i++) {
@@ -112,7 +231,7 @@ export async function analyze(plan: Plan, schemas: TableInfo[], cat: Catalog, mo
     try {
       decision = await llmJSON(
         ANALYST_SYS,
-        `${planText}\n\nSCHEMA (chosen tables):\n${schemaBlock(schemas)}\n\n${catalogText}\n\nRESULTS SO FAR:\n${resultsBlock(results)}\n\nDecide the next query, or finish.`,
+        `${planText}\n\nSCHEMA (chosen tables):\n${schemaBlock(schemas)}${graphBlock}\n\n${catalogText}\n\nRESULTS SO FAR:\n${resultsBlock(results)}\n\nDecide the next query, or finish.`,
         model,
         900,
       );
@@ -124,6 +243,19 @@ export async function analyze(plan: Plan, schemas: TableInfo[], cat: Catalog, mo
     if (decision.done || !decision.sql) break;
 
     const purpose = decision.purpose || "Querying";
+
+    // Pre-flight: catch an alias-qualified column used on the wrong table (e.g.
+    // `collections.branch` when `branch` lives on loan_book) BEFORE paying a query
+    // round-trip. The hint carries the right table + the join key from the graph, so
+    // the analyst fixes it on the next turn instead of guessing again. Conservative:
+    // only fires on a confident wrong-table reference, never on a valid query.
+    const preflight = checkColumns(decision.sql, colIndex, sub);
+    if (preflight) {
+      results.push({ purpose, sql: decision.sql, rows: [], rowCount: 0, error: preflight });
+      emit({ type: "step", id: stepId(), kind: "query", status: "error", label: "Adjusting the query", detail: preflight.slice(0, 140) });
+      continue;
+    }
+
     const id = stepId();
     emit({ type: "step", id, kind: "query", status: "running", label: "Querying ClickHouse", detail: purpose });
     try {
@@ -132,8 +264,12 @@ export async function analyze(plan: Plan, schemas: TableInfo[], cat: Catalog, mo
       results.push({ purpose, sql: decision.sql, columns: res.columns.map((c) => c.name), rows: res.rows.slice(0, 40), rowCount: res.rowCount });
       emit({ type: "step", id, kind: "query", status: "done", label: "Queried ClickHouse", detail: `${purpose} · ${res.rowCount} row${res.rowCount === 1 ? "" : "s"} · ${res.elapsedMs}ms` });
     } catch (e) {
-      results.push({ purpose, sql: decision.sql, rows: [], rowCount: 0, error: errMsg(e) });
-      emit({ type: "step", id, kind: "query", status: "error", label: "Query failed", detail: errMsg(e) });
+      // Enrich a ClickHouse "unknown column" error with the table that actually owns
+      // the column + the join key, so the retry is grounded (catches the unqualified
+      // case the pre-flight deliberately leaves alone).
+      const msg = enrichColumnError(errMsg(e), decision.sql, colIndex, sub);
+      results.push({ purpose, sql: decision.sql, rows: [], rowCount: 0, error: msg });
+      emit({ type: "step", id, kind: "query", status: "error", label: "Query failed", detail: msg.slice(0, 140) });
     }
   }
 

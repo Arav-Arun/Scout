@@ -3,6 +3,8 @@ import { runScoutWorkflow } from "@/lib/agent/workflow";
 import { ingestFile } from "@/lib/db/ingest";
 import { invalidateCatalog } from "@/lib/db/catalog";
 import { dbName } from "@/lib/db/clickhouse";
+import { getSchemaGraph } from "@/lib/graph/schema-graph";
+import { tableDomain } from "@/lib/graph/relationships";
 import type { ChatTurn, ScoutEvent } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -36,6 +38,26 @@ export async function GET(
       status: 200,
       headers: { "Content-Type": "text/plain", "Cache-Control": "no-store" },
     });
+  }
+
+  // The recovered schema knowledge graph (nodes = tables, edges = join keys), for the
+  // in-app graph viewer. Built from the same getSchemaGraph() the agent's RELATE phase uses.
+  if (path === "graph") {
+    try {
+      const g = await getSchemaGraph();
+      const nodes = [...g.nodes.entries()].map(([id, n]) => ({
+        id,
+        rowCount: n.rowCount,
+        cols: n.columns.length,
+        domain: tableDomain(id),
+      }));
+      const edges = g.edges.map((e) => ({
+        a: e.a, b: e.b, aCol: e.aCol, bCol: e.bCol, label: e.label, source: e.source,
+      }));
+      return Response.json({ nodes, edges });
+    } catch (e) {
+      return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
+    }
   }
 
   return new Response("Not Found", { status: 404 });

@@ -43,8 +43,8 @@ button:disabled,
 
 /* ── Dark mode ─────────────────────────────────────────────────────────────── */
 [data-theme="dark"] body {
-  /* Clean, solid, minimalistic dark-mode background (Slightly lighter shade of grey) */
-  background-color: #2c2e33;
+  /* Clean, solid, minimalistic dark-mode background (neutral grey, a touch darker) */
+  background-color: #222224;
   color: #f8fafc;
 }
 
@@ -53,42 +53,43 @@ button:disabled,
   --color-ink-soft: #cbd5e1;
   --color-ink-faint: #94a3b8;
   --color-line: rgba(255, 255, 255, 0.08);
-  --color-canvas: #202124;
-  --color-brand: #0DB8AA;
-  --color-brand-dark: #0C8790;
-  --color-brand-50: rgba(13, 184, 170, 0.1);
-  --color-brand-100: rgba(13, 184, 170, 0.16);
+  --color-canvas: #19191b;
+  /* Same blue as light mode (was teal) */
+  --color-brand: #2f6bff;
+  --color-brand-dark: #1d4ed8;
+  --color-brand-50: rgba(47, 107, 255, 0.12);
+  --color-brand-100: rgba(47, 107, 255, 0.18);
 }
 
 /* ── Frosted-glass surfaces (dark) ────────────────────────────────────────── */
 [data-theme="dark"] .glass {
-  background: linear-gradient(135deg, rgba(16, 16, 24, 0.45) 0%, rgba(10, 10, 16, 0.35) 100%);
+  background: linear-gradient(135deg, rgba(40, 40, 42, 0.45) 0%, rgba(30, 30, 31, 0.35) 100%);
   backdrop-filter: blur(32px) saturate(180%);
   -webkit-backdrop-filter: blur(32px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.07);
   box-shadow: 0 8px 32px -16px rgba(0, 0, 0, 0.4);
 }
 [data-theme="dark"] .glass-chrome {
-  background: rgba(22, 22, 32, 0.62);
+  background: rgba(38, 38, 40, 0.62);
   backdrop-filter: blur(35px) saturate(190%);
   -webkit-backdrop-filter: blur(35px) saturate(190%);
   border: 1px solid rgba(255, 255, 255, 0.09);
 }
 [data-theme="dark"] .glass-chrome-opaque {
-  background: rgba(22, 22, 32, 0.96);
+  background: rgba(38, 38, 40, 0.96);
   backdrop-filter: blur(40px) saturate(190%);
   -webkit-backdrop-filter: blur(40px) saturate(190%);
   border: 1px solid rgba(255, 255, 255, 0.09);
 }
 [data-theme="dark"] .glass-card {
-  background: linear-gradient(135deg, rgba(28, 28, 38, 0.48) 0%, rgba(16, 16, 24, 0.35) 100%);
+  background: linear-gradient(135deg, rgba(44, 44, 46, 0.48) 0%, rgba(34, 34, 35, 0.35) 100%);
   backdrop-filter: blur(24px) saturate(160%);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
   border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: 0 8px 24px -12px rgba(0, 0, 0, 0.3);
 }
 [data-theme="dark"] .soft {
-  background: rgba(13, 184, 170, 0.06);
+  background: rgba(47, 107, 255, 0.06);
 }
 [data-theme="dark"] .field {
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -242,6 +243,6 @@ button:disabled,
 }
 
 [data-theme="dark"] .narration code {
-  background: rgba(13, 184, 170, 0.12);
-  color: #5ee5d8;
+  background: rgba(47, 107, 255, 0.14);
+  color: #9db9ff;
 }

@@ -14,6 +14,12 @@ export const ChevronIcon = ({ className }: P) => (
   </svg>
 );
 
+export const ArrowLeftIcon = ({ className }: P) => (
+  <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden>
+    <path d="M10 4l-4 4 4 4M6 8h6.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
 export const SpinnerIcon = ({ className }: P) => (
   <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden>
     <circle cx="8" cy="8" r="6" stroke="currentColor" strokeOpacity="0.25" strokeWidth="2" />
@@ -117,6 +123,15 @@ export const ShareIcon = ({ className }: P) => (
     <circle cx="4" cy="8" r="1.8" stroke="currentColor" strokeWidth="1.4" />
     <circle cx="12" cy="12.5" r="1.8" stroke="currentColor" strokeWidth="1.4" />
     <path d="M5.6 7l4.8-2.6M5.6 9l4.8 2.6" stroke="currentColor" strokeWidth="1.4" />
+  </svg>
+);
+
+export const GraphIcon = ({ className }: P) => (
+  <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden>
+    <circle cx="3.5" cy="4" r="1.6" stroke="currentColor" strokeWidth="1.3" />
+    <circle cx="12.5" cy="3.5" r="1.6" stroke="currentColor" strokeWidth="1.3" />
+    <circle cx="8" cy="12" r="1.6" stroke="currentColor" strokeWidth="1.3" />
+    <path d="M4.7 5.2 6.9 10.6M11.4 4.7 9.2 10.6M5 4 11 3.7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
   </svg>
 );
 

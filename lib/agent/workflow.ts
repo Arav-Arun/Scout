@@ -2,8 +2,12 @@
 // THE AGENT  ·  lib/agent/workflow.ts
 //
 // Scout's brain, as a thin orchestrator. Turns one natural-language question into a
-// structured dashboard by running an explicit 5-phase pipeline in order:
-//   DISCOVER → PLAN → INSPECT → ANALYZE↻ → SYNTHESIZE
+// structured dashboard by running an explicit 6-phase pipeline in order:
+//   DISCOVER → PLAN → RELATE → INSPECT → ANALYZE↻ → SYNTHESIZE
+//
+// RELATE is the Graph RAG step: it walks the schema graph (lib/graph/) from the
+// planner's seed tables to retrieve the connected subgraph + the exact join keys, so
+// the analyst can join across the 34-table warehouse that has no foreign keys.
 //
 // Each phase is its own function in lib/agent/phases.ts; the formatters/helpers they
 // share live in lib/agent/context.ts. This file is just the sequence and the
@@ -11,13 +15,13 @@
 //
 // ▸ CALL MAP:
 //   - CALLED BY: lib/api.ts (chat handler) -> runScoutWorkflow(history, emit, opts)
-//   - CALLS:     lib/agent/phases.ts (discover, planAnalysis, inspect, analyze, synthesize)
+//   - CALLS:     lib/agent/phases.ts (discover, planAnalysis, relate, inspect, analyze, synthesize)
 //   - EMITS:     ScoutEvent objects (lib/types.ts) streamed to the UI.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { ChatTurn, AgentResult } from "../types";
 import { lastUser, type Emit } from "./context";
-import { discover, planAnalysis, inspect, analyze, synthesize } from "./phases";
+import { discover, planAnalysis, relate, inspect, analyze, synthesize } from "./phases";
 
 /** The result for an analysis that stopped before producing a dashboard. */
 const noDashboard = (clarified = false): AgentResult => ({ dashboard: null, queries: [], clarified });
@@ -45,13 +49,18 @@ export async function runScoutWorkflow(
     return noDashboard(true);
   }
 
-  // 3 · INSPECT ─ exact schemas for the chosen tables.
-  const schemas = await inspect(plan, cat, emit);
+  // 3 · RELATE ─ walk the schema graph to expand the seed tables with the bridge
+  //     tables that join them, and recover the exact join keys (no FKs in ClickHouse).
+  const sub = await relate(plan, emit);
 
-  // 4 · ANALYZE ─ the bounded query loop.
-  const { results, queries } = await analyze(plan, schemas, cat, model, emit);
+  // 4 · INSPECT ─ exact schemas for the subgraph's tables.
+  const schemas = await inspect(sub.tables, cat, emit);
 
-  // 5 · SYNTHESIZE ─ compose the dashboard (emits it; may be null on failure).
+  // 5 · ANALYZE ─ the bounded query loop, armed with the JOIN GRAPH + a pre-flight
+  //     column check that uses it to catch wrong-table column refs before they run.
+  const { results, queries } = await analyze(plan, schemas, sub, cat, model, emit);
+
+  // 6 · SYNTHESIZE ─ compose the dashboard (emits it; may be null on failure).
   const dashboard = await synthesize(plan, results, queries, model, emit);
   return { dashboard, queries, clarified: false };
 }

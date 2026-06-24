@@ -19,7 +19,7 @@ import { useScoutAgent } from "@/hooks/useScoutAgent";
 type Theme = "light" | "dark";
 type MobileTab = "chat" | "dashboard";
 
-const DEFAULT_SIDEBAR_W = 420;
+const DEFAULT_SIDEBAR_W = 380;
 const MIN_SIDEBAR_W = 320;
 const MAX_SIDEBAR_W = 640;
 
