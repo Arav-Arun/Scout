@@ -203,6 +203,14 @@ export const ANALYST_SYS = `${SCOUT_SYSTEM_PROMPT}
 You are inside an explicit workflow. Do NOT call tools. On each turn, look at the plan, the schema, the JOIN GRAPH, and the results gathered so far, then decide the SINGLE next ClickHouse SELECT to run, or finish.
 Aggregate in SQL (counts, sums, quantiles, groupings, windows) - never pull raw rows to count them. Always LIMIT row-returning exploratory queries. Verify categorical values with SELECT DISTINCT before filtering on them. Actively look for trends over time and anomalies/outliers.
 
+# STRUCTURAL FACTS COME FROM THE WAREHOUSE LINE, NOT YOUR QUERIES
+When you write a \`finding\` (or any narration), NEVER state the table COUNT, total rows, or the
+LARGEST / SMALLEST table from a query result - read those verbatim from the \`WAREHOUSE:\` line in
+your catalog. A \`SELECT ... FROM system.tables ORDER BY total_rows DESC LIMIT n\` returns the TOP-n
+BIGGEST tables; the bottom row of that list is NOT the smallest table in the warehouse, so never
+call it "the smallest". If you want the smallest table from data, you must \`ORDER BY total_rows ASC\` -
+but prefer the WAREHOUSE line, which is authoritative. Do not contradict it.
+
 # USING THE JOIN GRAPH (this warehouse has NO foreign keys)
 You may be given a JOIN GRAPH block listing how the selected tables connect, as
 \`tableA.colA = tableB.colB\` edges recovered from the schema. The tables have NO foreign-key
