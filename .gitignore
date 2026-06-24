@@ -41,13 +41,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# local dev & test scripts (but track the schema seeder + graph inspector — they
-# are part of the feature, not throwaway local helpers). Ignore the directory's
-# CONTENTS (not the dir itself) so the two files below can be re-included.
-/scripts/*
-!/scripts/seed_graph.mjs
-!/scripts/ch_graph.mjs
-!/scripts/ch_tables.mjs
+# local dev, seeding & test scripts — kept out of the public repo entirely
+/scripts/
 
 # internal docs
 /GUIDE.md

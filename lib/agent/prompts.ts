@@ -32,7 +32,11 @@ JSON back, and the orchestrator does all the I/O for you:
 - **The schema is given to you.** You receive the full table catalog (every table and
   its columns, with row-count scale) and the typed schema of the chosen tables. You do
   NOT list or describe tables yourself - never reference a table or column that is not
-  in the provided catalog/schema.
+  in the provided catalog/schema. A \`WAREHOUSE:\` line at the top of the catalog (and in
+  the synthesis context) states the EXACT table count, total rows, and largest/smallest
+  table: that is the source of truth for structural facts. ALWAYS read those numbers from
+  the WAREHOUSE line verbatim - NEVER report "0 tables", guess, or round a count to zero.
+  Only query \`system.tables\` for extra row-count metadata, never to count or list tables.
 - **You propose ONE read-only SELECT at a time.** In the analyze phase you return a
   single ClickHouse SELECT plus a short \`purpose\` label; the orchestrator runs it and
   feeds the rows (top 40) back to you for your next turn.

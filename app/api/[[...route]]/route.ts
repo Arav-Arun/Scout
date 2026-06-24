@@ -53,6 +53,7 @@ export async function GET(
       }));
       const edges = g.edges.map((e) => ({
         a: e.a, b: e.b, aCol: e.aCol, bCol: e.bCol, label: e.label, source: e.source,
+        overlap: e.overlap, verified: e.verified,
       }));
       return Response.json({ nodes, edges });
     } catch (e) {

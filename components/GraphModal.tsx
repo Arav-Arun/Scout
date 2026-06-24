@@ -18,7 +18,7 @@ import { createPortal } from "react-dom";
 import { ArrowLeftIcon } from "./icons";
 
 interface GNode { id: string; rowCount: number; cols: number; domain: string }
-interface GEdge { a: string; b: string; aCol: string; bCol: string; label: string; source: "curated" | "inferred" }
+interface GEdge { a: string; b: string; aCol: string; bCol: string; label: string; source: "curated" | "inferred"; overlap?: number; verified?: boolean }
 interface GraphData { nodes: GNode[]; edges: GEdge[] }
 
 const DOMAIN_COLORS: Record<string, string> = {
@@ -95,7 +95,9 @@ export default function GraphModal({ open, onClose }: { open: boolean; onClose: 
         <div className="min-w-0">
           <div className="text-[15px] font-bold text-ink leading-tight">Schema Knowledge Graph</div>
           <div className="text-[11.5px] text-ink-faint mt-0.5 truncate">
-            {data ? `${data.nodes.length} tables · ${data.edges.length} relationships` : "Loading…"}
+            {data
+              ? `${data.nodes.length} tables · ${data.edges.length} relationships (${data.edges.filter((e) => e.verified).length} verified against live data)`
+              : "Loading…"}
           </div>
         </div>
       </div>
@@ -113,12 +115,20 @@ export default function GraphModal({ open, onClose }: { open: boolean; onClose: 
                 if (!pa || !pb) return null;
                 const hub = HUB.has(e.aCol) || HUB.has(e.bCol);
                 const inc = hover && (e.a === hover || e.b === hover);
+                const partial = e.verified === false; // measured against live data, but low overlap
                 let stroke = "rgba(148,163,184,0.28)", w = 1, op = 1;
                 let dash: string | undefined = e.source === "inferred" ? "3 3" : undefined;
                 if (hub) { stroke = "rgba(148,163,184,0.12)"; w = 0.6; }
+                else if (partial) { stroke = "rgba(245,158,11,0.6)"; w = 1; dash = "4 3"; }   // amber = lossy join
+                else if (e.verified) { stroke = "rgba(47,107,255,0.5)"; w = 1.25; dash = undefined; } // verified join key
                 else if (e.source === "curated") { stroke = "rgba(47,107,255,0.4)"; w = 1.1; }
-                if (hover) { if (inc) { stroke = "#2f6bff"; w = 1.7; dash = undefined; } else { op = 0.06; } }
-                return <line key={i} x1={pa.x} y1={pa.y} x2={pb.x} y2={pb.y} stroke={stroke} strokeWidth={w} strokeDasharray={dash} opacity={op} />;
+                if (hover) { if (inc) { stroke = partial ? "#f59e0b" : "#2f6bff"; w = 1.8; dash = partial ? "4 3" : undefined; } else { op = 0.06; } }
+                const pct = e.overlap !== undefined ? ` · ${Math.round(e.overlap * 100)}% overlap` : "";
+                return (
+                  <line key={i} x1={pa.x} y1={pa.y} x2={pb.x} y2={pb.y} stroke={stroke} strokeWidth={w} strokeDasharray={dash} opacity={op}>
+                    <title>{`${e.a}.${e.aCol} = ${e.b}.${e.bCol}${pct}`}</title>
+                  </line>
+                );
               })}
               {data.nodes.map((n) => {
                 const p = pos.get(n.id);
@@ -157,13 +167,13 @@ export default function GraphModal({ open, onClose }: { open: boolean; onClose: 
             <div className="border-t border-line/50 pt-4">
               <div className="mb-3 text-[11px] font-bold uppercase tracking-wider text-ink-faint">Relationships</div>
               <div className="flex flex-col gap-2.5 text-[12.5px] font-medium text-ink-soft">
-                <span className="flex items-center gap-2.5"><span className="inline-block w-6 border-t-2" style={{ borderColor: "rgba(47,107,255,0.7)" }} />curated</span>
-                <span className="flex items-center gap-2.5"><span className="inline-block w-6 border-t border-dashed" style={{ borderColor: "rgba(148,163,184,0.9)" }} />inferred</span>
+                <span className="flex items-center gap-2.5"><span className="inline-block w-6 border-t-2" style={{ borderColor: "rgba(47,107,255,0.7)" }} />verified join</span>
+                <span className="flex items-center gap-2.5"><span className="inline-block w-6 border-t-2 border-dashed" style={{ borderColor: "rgba(245,158,11,0.85)" }} />partial overlap</span>
               </div>
             </div>
 
             <div className="mt-auto rounded-xl border border-line/40 bg-black/[0.03] px-3 py-2.5 text-[11.5px] leading-relaxed text-ink-faint dark:bg-white/[0.04]">
-              Hover any table to trace its joins.
+              Hover a table to trace its joins; hover an edge for its live key overlap. Join keys are verified against the current data, and phantom edges (no real overlap) are dropped.
             </div>
           </aside>
         )}

@@ -25,6 +25,7 @@ import {
   errMsg,
   historyText,
   compactCatalog,
+  warehouseFacts,
   schemaBlock,
   resultsBlock,
   planBlock,
@@ -279,7 +280,7 @@ export async function analyze(plan: Plan, schemas: TableInfo[], sub: SubGraph, c
 // ── PHASE 5: SYNTHESIZE ──────────────────────────────────────────────────────
 
 /** Compose the final dashboard from the gathered results. Returns null on failure. */
-export async function synthesize(plan: Plan, results: AnalyzeResult[], queries: ExecutedQuery[], model: string, emit: Emit): Promise<Dashboard | null> {
+export async function synthesize(plan: Plan, results: AnalyzeResult[], queries: ExecutedQuery[], cat: Catalog, model: string, emit: Emit): Promise<Dashboard | null> {
   const id = stepId();
   emit({ type: "step", id, kind: "think", status: "running", label: "Synthesising the dashboard" });
   const hasQueries = results.length > 0;
@@ -292,7 +293,7 @@ export async function synthesize(plan: Plan, results: AnalyzeResult[], queries: 
   try {
     const raw = await llmJSON<Record<string, unknown>>(
       SYNTH_SYS,
-      `${planBlock(plan)}\n\nGATHERED RESULTS:\n${resultsBlock(results)}\n\nCompose the final answer now, honouring the response format: "${plan.response_format}".`,
+      `${warehouseFacts(cat.tables, cat.rowCounts)}\n\n${planBlock(plan)}\n\nGATHERED RESULTS:\n${resultsBlock(results)}\n\nCompose the final answer now, honouring the response format: "${plan.response_format}". For any warehouse-structure fact (table count, total rows, largest/smallest table) use the WAREHOUSE line above verbatim - never guess or report 0.`,
       model,
       3500,
     );

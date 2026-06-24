@@ -19,17 +19,23 @@ import type { TableInfo } from "../db/clickhouse";
 import {
   CURATED_RELATIONSHIPS, inferRelationships, HUB_COLUMNS, type Relationship,
 } from "./relationships";
+import { verifySchemaGraph } from "./verify";
 
 /** An undirected edge between two tables, carrying the exact join columns. */
 export interface GraphEdge {
-  a: string; // table
-  b: string; // table
+  a: string; // table (the child / referencing side)
+  b: string; // table (the parent / key side)
   aCol: string;
   bCol: string;
   label: string;
   source: "curated" | "inferred";
   /** Lower = stronger/cheaper to traverse. Hub edges (via customers/city) cost more. */
   weight: number;
+  /** Fraction of sampled `a.aCol` values that actually resolve to `b.bCol` in the LIVE data
+   *  (set by lib/graph/verify.ts). undefined = not yet/can't be measured. */
+  overlap?: number;
+  /** True once the edge is data-verified (overlap ≥ STRONG_OVERLAP) - a real join key, not just a name match. */
+  verified?: boolean;
 }
 
 export interface SchemaGraph {
@@ -105,14 +111,34 @@ function hasColumn(t: TableInfo | undefined, col: string): boolean {
 
 let _graph: SchemaGraph | null = null;
 let _graphCatalogAt = 0;
+let _building: Promise<SchemaGraph> | null = null;
+let _buildingForAt = 0;
 
-/** The schema graph, rebuilt only when the underlying catalog changes. */
+/**
+ * The schema graph, rebuilt only when the underlying catalog changes. The build
+ * structures the graph (instant) then verifies its edges against the live data
+ * (lib/graph/verify.ts) so phantom relationships are dropped and partial ones flagged.
+ * Concurrent callers for the same catalog share one in-flight build.
+ */
 export async function getSchemaGraph(): Promise<SchemaGraph> {
   const cat = await getCatalog();
   if (_graph && _graphCatalogAt === cat.discoveredAt) return _graph;
-  _graph = buildSchemaGraph(cat);
-  _graphCatalogAt = cat.discoveredAt;
-  return _graph;
+  if (_building && _buildingForAt === cat.discoveredAt) return _building;
+
+  _buildingForAt = cat.discoveredAt;
+  _building = (async () => {
+    const g = buildSchemaGraph(cat);
+    try {
+      await verifySchemaGraph(g); // annotate overlap/verified + drop measured-phantom edges
+    } catch {
+      // Verification is best-effort: a failure leaves the structural graph intact.
+    }
+    _graph = g;
+    _graphCatalogAt = cat.discoveredAt;
+    _building = null;
+    return g;
+  })();
+  return _building;
 }
 
 // ── Traversal ────────────────────────────────────────────────────────────────
@@ -209,9 +235,17 @@ export function formatGraphForPrompt(sub: SubGraph): string {
     return `JOIN GRAPH\n(the selected tables have no known relationships; query them independently)`;
   }
   const lines = sub.edges
-    .map((e) => `- ${e.a}.${e.aCol} = ${e.b}.${e.bCol}  (${e.a} ${e.label} ${e.b})`)
+    .map((e) => {
+      // Flag a partial edge (verified against live data, but only some keys resolve) so the
+      // analyst knows the join is lossy - e.g. market_sales.customer_id only ~6% in customers.
+      const partial =
+        e.verified === false && e.overlap !== undefined
+          ? `  [PARTIAL: only ~${Math.round(e.overlap * 100)}% of ${e.a}.${e.aCol} values match ${e.b}.${e.bCol}; an inner join drops the rest]`
+          : "";
+      return `- ${e.a}.${e.aCol} = ${e.b}.${e.bCol}  (${e.a} ${e.label} ${e.b})${partial}`;
+    })
     .join("\n");
-  return `JOIN GRAPH (tables have NO foreign keys - join on these recovered keys)\nTables: ${sub.tables.join(", ")}\n${lines}`;
+  return `JOIN GRAPH (tables have NO foreign keys; these join keys are RECOVERED and VERIFIED against the live data - edges with no real value overlap have been dropped)\nTables: ${sub.tables.join(", ")}\n${lines}`;
 }
 
 /** Short one-line summary for the step chip, e.g. "linked 5 tables via customer_id, card_id". */

@@ -61,6 +61,8 @@ export async function runScoutWorkflow(
   const { results, queries } = await analyze(plan, schemas, sub, cat, model, emit);
 
   // 6 · SYNTHESIZE ─ compose the dashboard (emits it; may be null on failure).
-  const dashboard = await synthesize(plan, results, queries, model, emit);
+  //     `cat` carries the exact warehouse facts (table count, total rows) so the
+  //     synthesizer never has to guess structural numbers (cf. the "0 tables" bug).
+  const dashboard = await synthesize(plan, results, queries, cat, model, emit);
   return { dashboard, queries, clarified: false };
 }

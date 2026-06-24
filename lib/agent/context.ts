@@ -61,11 +61,48 @@ export function historyText(history: ChatTurn[]): string {
     .join("\n");
 }
 
+// ── Warehouse-level facts (deterministic, computed from the catalog) ──────────
+// These are the ground truth for structural questions ("how many tables / rows?").
+// The synthesizer never sees the catalog, so without this it used to GUESS the count
+// (and once answered "0 tables"). We compute the facts in code and hand them to the
+// model so it never has to count tables itself.
+
+export interface WarehouseSummary {
+  tableCount: number;
+  totalRows: number;
+  largest?: { name: string; rows: number };
+  smallest?: { name: string; rows: number };
+}
+
+/** Roll the catalog up into warehouse totals: table count, total rows, largest/smallest. */
+export function warehouseSummary(tables: TableInfo[], rowCounts: Record<string, number> = {}): WarehouseSummary {
+  let totalRows = 0;
+  let largest: { name: string; rows: number } | undefined;
+  let smallest: { name: string; rows: number } | undefined;
+  for (const t of tables) {
+    const n = rowCounts[t.name] ?? 0;
+    totalRows += n;
+    if (!largest || n > largest.rows) largest = { name: t.name, rows: n };
+    if (n > 0 && (!smallest || n < smallest.rows)) smallest = { name: t.name, rows: n };
+  }
+  return { tableCount: tables.length, totalRows, largest, smallest };
+}
+
+/** One exact, model-readable line of warehouse facts (exact integers, never rounded to 0). */
+export function warehouseFacts(tables: TableInfo[], rowCounts: Record<string, number> = {}): string {
+  const s = warehouseSummary(tables, rowCounts);
+  const n = (x: number) => x.toLocaleString("en-US");
+  const parts = [`${s.tableCount} table${s.tableCount === 1 ? "" : "s"}`, `${n(s.totalRows)} rows total`];
+  if (s.largest) parts.push(`largest: ${s.largest.name} (${n(s.largest.rows)})`);
+  if (s.smallest) parts.push(`smallest: ${s.smallest.name} (${n(s.smallest.rows)})`);
+  return `WAREHOUSE: ${parts.join(" · ")}.`;
+}
+
 // ── Catalog / schema / results formatting ────────────────────────────────────
 
 /** Compact one-line-per-table catalog for the planner (incl. row-count scale). */
 export function compactCatalog(tables: TableInfo[], rowCounts: Record<string, number> = {}): string {
-  return tables
+  const lines = tables
     .map((t) => {
       const cols = t.columns.slice(0, 40).map((c) => c.name).join(", ");
       const more = t.columns.length > 40 ? `, …(+${t.columns.length - 40})` : "";
@@ -74,6 +111,9 @@ export function compactCatalog(tables: TableInfo[], rowCounts: Record<string, nu
       return `- ${t.name} [${t.columns.length} cols${scale}]: ${cols}${more}`;
     })
     .join("\n");
+  // Header line states the exact table count up front: it is the source of truth for
+  // structural facts, so the model reads it instead of guessing (cf. the "0 tables" bug).
+  return `${warehouseFacts(tables, rowCounts)}\n${lines}`;
 }
 
 /** Human-readable row count (1_00_00_000 -> "10.0M") for catalog context. */

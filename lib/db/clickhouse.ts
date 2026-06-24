@@ -80,10 +80,15 @@ export interface QueryResult {
 }
 
 /** Execute a validated read-only query and return rows as JSON. */
-export async function runSelect(sql: string): Promise<QueryResult> {
+export async function runSelect(
+  sql: string,
+  opts?: { settings?: Record<string, string | number> },
+): Promise<QueryResult> {
   assertReadOnly(sql);
   const started = Date.now();
-  const rs = await getClient().query({ query: sql, format: "JSON" });
+  // Per-query settings (e.g. a max_execution_time cap for the graph-verification probes)
+  // are allowed under readonly=2; they merge over the client's defaults.
+  const rs = await getClient().query({ query: sql, format: "JSON", clickhouse_settings: opts?.settings });
   const json = (await rs.json()) as {
     meta?: { name: string; type: string }[];
     data?: Record<string, unknown>[];
