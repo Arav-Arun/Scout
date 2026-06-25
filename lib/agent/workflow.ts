@@ -1,5 +1,4 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// THE AGENT  ·  lib/agent/workflow.ts
 //
 // Scout's brain, as a thin orchestrator. Turns one natural-language question into a
 // structured dashboard by running an explicit 6-phase pipeline in order:

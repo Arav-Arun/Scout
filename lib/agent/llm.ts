@@ -1,6 +1,4 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// LLM CLIENT  ·  lib/agent/llm.ts
-//
 // Thin wrapper around the OpenAI SDK. Provides a single reusable `llmJSON()`
 // call that returns parsed JSON from any model. Separated from workflow
 // orchestration so it can be reused by other features.
