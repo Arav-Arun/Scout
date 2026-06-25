@@ -6,8 +6,8 @@
 // Pure layout shell. All agent interaction state lives in hooks/useScoutAgent.ts.
 // This component only handles:
 //   - Desktop vs mobile layout switching
-//   - Theme persistence
-//   - Sidebar resize
+//   - Theme toggle + persistence (restored on load; see the pre-paint script in app/layout.tsx)
+//   - Sidebar resize (width persisted to localStorage)
 //   - Rendering ChatPanel + DashboardPanel
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -32,13 +32,15 @@ export default function Home() {
   const [mobileDashboardBadge, setMobileDashboardBadge] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_W);
 
-  // ── Persist theme & sidebar width ──────────────────────────────────────────
+  // ── Restore the persisted theme + sidebar width ────────────────────────────
   useEffect(() => {
-    setTheme("light");
+    const savedTheme = localStorage.getItem("scout-theme");
+    if (savedTheme === "dark" || savedTheme === "light") setTheme(savedTheme);
     const savedW = localStorage.getItem("scout-sidebar-w");
     if (savedW) setSidebarWidth(Math.min(Math.max(Number(savedW), MIN_SIDEBAR_W), MAX_SIDEBAR_W));
   }, []);
 
+  // Persist the theme and keep the DOM attribute in sync with the toggle.
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("scout-theme", theme);

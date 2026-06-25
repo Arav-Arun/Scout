@@ -6,8 +6,8 @@
 // The conversation surface: composer, message list, live reasoning-step chips,
 // model picker, file upload, and the DB connection banner.
 //   - MOUNTED BY: app/page.tsx (which owns send()/uploadFile() and all state)
-//   - CALLS:      GET /api/db-info (app/api/db-info/route.ts) for the host/db
-//                 banner; onSend()/onUpload() are passed down from page.tsx.
+//   - CALLS:      GET /api/db-info (handled in app/api/[[...route]]/route.ts) for the
+//                 host/db banner; onSend()/onUpload() are passed down from page.tsx.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useEffect, useRef, useState } from "react";
@@ -318,10 +318,10 @@ export default function ChatPanel({
 }
 
 const SUGGESTIONS = [
-  "Which products are on the decline, and since when?",
-  "Which products are growing the fastest year over year?",
-  "Break down total net revenue by category and sales channel.",
-  "Compare online vs retail store sales over time.",
+  "How many high value customers turned dormant? Check the 2026 Jan cohort.",
+  "What's the average credit score by customer value band?",
+  "What does our loan book look like? Break it down by DPD buckets.",
+  "Find customers with high fraud risk who are also priority customers.",
 ];
 
 function EmptyState({ onPick, onUploadClick }: { onPick: (t: string) => void; onUploadClick: () => void }) {

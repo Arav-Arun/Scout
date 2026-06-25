@@ -11,7 +11,7 @@ import { createClient, type ClickHouseClient } from "@clickhouse/client";
 //   - lib/agent/phases.ts (the AGENT) imports describeTable/runSelect from here.
 //   - lib/db/catalog.ts builds the cached warehouse map on top of runSelect.
 //   - lib/db/ingest.ts (the WRITE path) imports runSelect/describeTable to dedupe uploads.
-//   - lib/api.ts (db-info handler) reads only env (host/db) for the UI banner.
+//   - app/api/[[...route]]/route.ts (db-info handler) reads only env (host/db) for the UI banner.
 //
 // The single ClickHouse client (getClient) is connect-once / reuse-forever: we do NOT
 // reconnect on every question. The schema cache lives in lib/db/catalog.ts; the write
@@ -51,7 +51,7 @@ export function getClient(): ClickHouseClient {
 /**
  * Throw unless `sql` is a single read-only statement.
  *
- * Read-only is enforced by an allowlist on the *leading* statement keyword plus a
+ * Read-only is enforced by an allowlist on the leading statement keyword plus a
  * ban on stacked statements. A statement that begins with SELECT/WITH/DESCRIBE/
  * SHOW/EXPLAIN and contains no `;` cannot mutate data - write/DDL verbs (INSERT,
  * DROP, ALTER, …) can only run as a leading keyword, which the allowlist rejects.
@@ -76,7 +76,6 @@ export interface QueryResult {
   rows: Record<string, unknown>[];
   rowCount: number;
   elapsedMs: number;
-  truncated: boolean;
 }
 
 /** Execute a validated read-only query and return rows as JSON. */
@@ -103,7 +102,6 @@ export async function runSelect(
     elapsedMs: json.statistics?.elapsed
       ? Math.round(json.statistics.elapsed * 1000)
       : Date.now() - started,
-    truncated: false,
   };
 }
 

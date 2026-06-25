@@ -149,8 +149,6 @@ export function tableDomain(name: string): string {
   return TABLE_DOMAIN[name] ?? "Retail / other";
 }
 
-const KEY_COLUMN = (name: string) => name === "branch" || name === "product" || name in PARENT_OF_COLUMN || /_id$/.test(name);
-
 /**
  * Recover join edges purely from the catalog, with no FK metadata: every key-like
  * column that exists both in a table and in its canonical parent table becomes an
@@ -171,5 +169,3 @@ export function inferRelationships(tables: TableInfo[]): Relationship[] {
   }
   return out;
 }
-
-export { KEY_COLUMN };

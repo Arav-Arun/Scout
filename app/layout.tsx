@@ -25,10 +25,10 @@ export default function RootLayout({
   return (
     <html lang="en" className={sans.variable} suppressHydrationWarning>
       <head>
-        {/* Apply light theme by default before paint. */}
+        {/* Apply the persisted theme before paint to avoid a flash of the wrong theme. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `try{document.documentElement.setAttribute('data-theme','light')}catch(e){}`,
+            __html: `try{var t=localStorage.getItem('scout-theme');document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'light')}catch(e){}`,
           }}
         />
       </head>

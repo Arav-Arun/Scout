@@ -2,7 +2,7 @@
 
 // UI · CHART RENDERER · components/EChart.tsx
 // Thin wrapper around Apache ECharts v5. Receives a complete `echarts` options
-// object (produced by the agent in lib/workflow.ts, normalized in lib/types.ts)
+// object (produced and normalized by the agent's synthesize phase in lib/agent/phases.ts; typed in lib/types.ts)
 // and draws it. Used by components/DashboardPanel.tsx, one instance per ChartSpec.
 
 import { useEffect, useRef } from "react";

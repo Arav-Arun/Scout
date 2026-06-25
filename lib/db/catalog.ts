@@ -7,7 +7,7 @@
 //
 // ▸ CALL MAP:
 //   - lib/agent/phases.ts (DISCOVER) calls getCatalog() once per analysis.
-//   - lib/api.ts (upload handler) calls invalidateCatalog() after an upload so a
+//   - app/api/[[...route]]/route.ts (upload handler) calls invalidateCatalog() after an upload so a
 //     freshly uploaded table shows up immediately.
 //
 // The cache refreshes lazily after CATALOG_TTL_MS. Stateless data access (the client,

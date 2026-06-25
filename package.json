@@ -11,7 +11,7 @@
     "db:tables": "node scripts/ch_tables.mjs",
     "db:peek": "bash scripts/peek.sh",
     "db:seed-graph": "node scripts/seed_graph.mjs",
-    "db:graph": "node scripts/ch_graph.mjs"
+    "db:eval": "node scripts/eval_graph.mjs"
   },
   "dependencies": {
     "@clickhouse/client": "^1.11.0",

@@ -12,7 +12,7 @@
 import type { TableInfo } from "../db/clickhouse";
 import type { ChatTurn, ScoutEvent } from "../types";
 
-/** A callback that streams one event to the UI (wired up by app/api/chat/route.ts). */
+/** A callback that streams one event to the UI (wired up by app/api/[[...route]]/route.ts). */
 export type Emit = (e: ScoutEvent) => void;
 
 // ── Shared phase shapes ──────────────────────────────────────────────────────
@@ -62,12 +62,12 @@ export function historyText(history: ChatTurn[]): string {
 }
 
 // ── Warehouse-level facts (deterministic, computed from the catalog) ──────────
-// These are the ground truth for structural questions ("how many tables / rows?").
-// The synthesizer never sees the catalog, so without this it used to GUESS the count
-// (and once answered "0 tables"). We compute the facts in code and hand them to the
-// model so it never has to count tables itself.
+// The ground truth for structural questions ("how many tables / rows?"). We compute
+// these in code and hand them to the model as one WAREHOUSE line, so it never has to
+// count tables itself (cf. the "0 tables" bug, where the synthesizer guessed structural
+// numbers because it was never given them).
 
-export interface WarehouseSummary {
+interface WarehouseSummary {
   tableCount: number;
   totalRows: number;
   largest?: { name: string; rows: number };
@@ -75,7 +75,7 @@ export interface WarehouseSummary {
 }
 
 /** Roll the catalog up into warehouse totals: table count, total rows, largest/smallest. */
-export function warehouseSummary(tables: TableInfo[], rowCounts: Record<string, number> = {}): WarehouseSummary {
+function warehouseSummary(tables: TableInfo[], rowCounts: Record<string, number> = {}): WarehouseSummary {
   let totalRows = 0;
   let largest: { name: string; rows: number } | undefined;
   let smallest: { name: string; rows: number } | undefined;

@@ -33,13 +33,6 @@ export async function GET(
     return Response.json({ host: cleanHost, database });
   }
 
-  if (path === "health") {
-    return new Response("ok", {
-      status: 200,
-      headers: { "Content-Type": "text/plain", "Cache-Control": "no-store" },
-    });
-  }
-
   // The recovered schema knowledge graph (nodes = tables, edges = join keys), for the
   // in-app graph viewer. Built from the same getSchemaGraph() the agent's RELATE phase uses.
   if (path === "graph") {
@@ -72,7 +65,7 @@ export async function POST(
   const path = route?.[0];
 
   if (path === "chat") {
-    let body: { messages?: ChatTurn[] };
+    let body: { messages?: ChatTurn[]; graph?: boolean; values?: boolean };
     try {
       body = await request.json();
     } catch {
@@ -80,6 +73,9 @@ export async function POST(
     }
 
     const history = Array.isArray(body.messages) ? body.messages : [];
+    // A/B flags for the Graph-RAG eval harness (scripts/eval_graph.mjs); both default ON.
+    const useGraph = body.graph !== false;
+    const useValues = body.values !== false;
 
     const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
@@ -88,7 +84,7 @@ export async function POST(
           controller.enqueue(encoder.encode(JSON.stringify(e) + "\n"));
         };
         try {
-          await runScoutWorkflow(history, send);
+          await runScoutWorkflow(history, send, { useGraph, useValues });
           send({ type: "done" });
         } catch (e) {
           send({ type: "error", message: e instanceof Error ? e.message : String(e) });

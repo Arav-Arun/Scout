@@ -59,14 +59,6 @@ export function parseDelimited(text: string, delimiter: string = ",", maxRows?: 
   return rows.filter((r) => r.length > 1 || (r.length === 1 && r[0].trim() !== ""));
 }
 
-export function parseCsv(text: string, maxRows?: number): string[][] {
-  return parseDelimited(text, ",", maxRows);
-}
-
-export function parseTsv(text: string, maxRows?: number): string[][] {
-  return parseDelimited(text, "\t", maxRows);
-}
-
 // ── JSON parsing ─────────────────────────────────────────────────────────────
 
 /**

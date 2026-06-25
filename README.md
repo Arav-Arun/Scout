@@ -29,7 +29,7 @@ Stream of events  →  Chat panel (step chips + narration)  +  Dashboard panel
 Instead of running a single, unconstrained loop where an LLM repeatedly calls tools Scout decomposes the data analytics process into six discrete, structured, and sequentially typed phases:
 1. **DISCOVER**: A fast, low-overhead metadata listing to map out the entire warehouse and gather table/column catalogs before planning.
 2. **PLAN**: The Planner LLM (`PLANNER_SYS` in `lib/agent/prompts.ts`) interprets the user's request, parses ambiguous terms, sets metric definitions, determines output format requirements, and decides if clarification is needed.
-3. **RELATE (Graph RAG)**: Walks the **schema graph** (`lib/graph/`) from the planner's seed tables to retrieve the connected subgraph - the seeds plus the bridge/dimension tables needed to join them - and the exact join keys. The warehouse has 34 interconnected tables and **no foreign keys**, so this is what lets the agent join correctly across them. See [GRAPH_RAG.md](GRAPH_RAG.md).
+3. **RELATE (Graph RAG)**: Walks the **schema graph** (`lib/graph/`) from the planner's seed tables to retrieve the connected subgraph - the seeds plus the bridge/dimension tables needed to join them - and the exact join keys. The warehouse has 32 interconnected tables and **no foreign keys**, so this is what lets the agent join correctly across them. The exact live count is read at runtime from `warehouseFacts()`, never hardcoded.
 4. **INSPECT**: Fetches target schemas (column names and database types) for the subgraph's tables (`describeTable`) to ensure syntactic correctness in generated SQL.
 5. **ANALYZE Loop**: An iterative query loop (capped at 8 queries) where the Analyst LLM (`ANALYST_SYS`) - now given the `JOIN GRAPH` - suggests a single query, executes it, and evaluates up to 40 row result previews to determine if further investigation is needed.
 6. **SYNTHESIZE**: The Synthesizer LLM (`SYNTH_SYS`) aggregates the query results, references exact metrics, and compiles a structured JSON dashboard conforming to the user's formatting request.
@@ -46,7 +46,8 @@ ClickHouse is a column oriented DBMS optimized for sub-second analytical queries
 ## Graph RAG, in detail
 
 Scout's hardest retrieval problem is **which tables to join, and on what keys**. The
-warehouse is 34 tables in one card-issuer / retail-bank domain, linked only by shared key
+warehouse is 32 tables in one
+card-issuer / retail-bank domain, linked only by shared key
 columns — ClickHouse has **no foreign keys**, and the schema was built that way on purpose.
 A flat "here are all the tables, pick some" catalog works at 6 tables; at 34, a single
 business question routinely spans a join chain the planner can't see, so the model guesses
@@ -81,19 +82,31 @@ nodes, recovered join keys are edges.
   against the live catalog — both tables must exist and both join columns must really be
   present (defends against stale curation).
 
-### Hub columns and edge weights
+### Hub columns
 
 `customer_id` and `city` are **hub columns** (`HUB_COLUMNS`) — `customer_id` alone lives in
-~24 tables. Left unweighted, every traversal would route through `customers` and drag the
-whole warehouse in. So hub edges are heavily penalised in the traversal weight (`weightOf`:
-inferred = 2, curated = 1, **+4 if it's a hub edge**). A question about `disputes` therefore
-reaches `card_transactions` directly instead of detouring through the customer hub.
+~24 tables. If retrieval bridged through them, every question would drag the whole warehouse in
+through `customers`. So when connecting tables, Scout **avoids hub edges first** and only falls
+back to them when there's no other path — a question about `disputes` reaches `card_transactions`
+directly instead of detouring through the customer hub.
+
+### Verify against live data (drop phantom joins)
+
+A shared column name doesn't prove two columns join. `account_transactions.txn_id` and
+`card_transactions.txn_id` share a name but have **zero** overlapping values (an inner join
+returns nothing). So once the graph
+is built, `verifyEdges()` samples each child key and measures the fraction that actually resolves
+to the parent (an `IN (subquery)` semi-join, **not** a LEFT JOIN — ClickHouse fills unmatched
+LEFT-JOIN cells with type defaults, which would make every edge look like a 100% match). Edges
+measured at 0% overlap are **dropped** as phantoms; the rest are marked `verified` (≥50% overlap)
+or flagged **partial**, and the `JOIN GRAPH` warns the analyst when a join is lossy. It fails
+open — a probe error/timeout leaves the edge un-judged rather than dropping a possibly-real key.
 
 ### Build + caching
 
-`getSchemaGraph()` is built on top of the cached catalog and shares its one warehouse scan.
-The graph is cached and **rebuilt only when the catalog changes** (its `discoveredAt`
-timestamp), so repeated questions and graph-view opens reuse it. The catalog scan is
+`getSchemaGraph()` is built on top of the cached catalog and shares its one warehouse scan
+(build → verify → cache). The graph is cached and **rebuilt only when the catalog changes**
+(its `discoveredAt` timestamp), so repeated questions and graph-view opens reuse it. The catalog scan is
 metadata-only (`system.columns` + `system.tables.total_rows` — no data scan) with a 5-minute
 TTL, invalidated immediately after an upload.
 
@@ -103,12 +116,12 @@ This is the heart of it. Given the **seed tables** the planner picked from the q
 returns the connected subgraph plus the exact join map:
 
 1. **Keep the seeds.**
-2. **Connect them** — for each seed, find the shortest **join path** to the already-included
-   set via Dijkstra over edge weights (`findJoinPath`) and pull in the **bridge tables**
-   along it. (So a question spanning `customers` + `branches` automatically pulls in
-   `accounts`.)
-3. **Enrich** — fill the remaining budget (`maxTables`, default 8) with the seeds' strongest
-   direct neighbours, cheapest edges first (typically the dimension tables).
+2. **Connect them** — for each remaining seed, find the shortest **join path** (fewest hops)
+   to the already-included set with a breadth-first search (`bfsPath`), preferring paths that
+   **avoid the hub**, and pull in the **bridge tables** along it. (So a question spanning
+   `customers` + `branches` automatically pulls in `accounts`.)
+3. **Enrich** — fill the remaining budget (`maxTables`, default 8) with the seeds' direct
+   non-hub neighbours, **verified edges first** (typically the dimension tables).
 
 The result is the table set plus every edge among those tables — the concrete join graph.
 
@@ -134,20 +147,34 @@ table set to INSPECT (now up to 8 tables, not 4), and the `JOIN GRAPH` block to 
 change is **additive and safe** — if the graph is empty or the seeds are unreachable, RELATE
 falls back to the seed tables and the pipeline behaves exactly as before.
 
+### Measured impact (before / after Graph RAG)
+
+`npm run db:eval` quantifies whether the graph helps: for each benchmark question it pulls the
+ground-truth answer straight from ClickHouse, then runs the **full agent twice** - graph **OFF**
+vs **ON** - and scores each run on whether it named the right answer with the right number, whether
+the SQL used the required (no-FK) join, and how many wrong-table / wrong-key queries ClickHouse
+rejected.
+
+A representative run over the multi-table questions that *require* a recovered join:
+
+| Metric | Graph OFF | Graph ON |
+|---|---|---|
+| Answer accuracy | 50% (2/4) | **75% (3/4)** |
+| Wrong-table / wrong-key SQL errors | 3 | **0** |
+| Completed with a dashboard | 4/4 | 4/4 |
+
+With the graph on, the agent recovered the right join path more reliably and produced **zero**
+wrong-table SQL errors (vs 3 without it) - e.g. *"which loan product recovered the most across
+collections?"* needs a `collections -> loan_book` join on `loan_id`: graph-off answered from the
+wrong basis, graph-on got it right. Numbers are computed live against the warehouse and vary run
+to run, so re-run `npm run db:eval` for a fresh measurement.
+
 ### Inspect it yourself
 
 The in-app **Schema Knowledge Graph** viewer (the graph icon at the top of the chat panel)
 renders the *exact same* `getSchemaGraph()` the agent walks — nodes coloured by sub-domain
 (`TABLE_DOMAIN`), curated vs inferred edges styled differently, hover a table to trace its
-joins. Or from the CLI, with no LLM:
-
-```bash
-npm run db:graph                       # full edge list + sample subgraphs
-npm run db:graph -- disputes branches  # the retrieved subgraph for a seed set
-```
-
-See [GRAPH_RAG.md](GRAPH_RAG.md) for the schema-expansion design note (34 tables) and the
-seeder's data-reconciliation guarantees.
+joins. The same graph is also served as JSON at `/api/graph` for programmatic inspection.
 
 ---
 
@@ -172,8 +199,7 @@ npm run dev          # http://localhost:3000
 npm run db:tables      # List all tables with row counts
 npm run db:peek        # Browse table data (usage: npm run db:peek -- <table> [limit])
 npm run db:seed-graph  # Generate the 28 interconnected tables (idempotent; --rebuild to reset)
-npm run db:graph       # Print the recovered schema graph + a sample retrieved subgraph (no LLM)
-npm run test:chat      # End-to-end agent test against running dev server
+npm run db:eval        # Measure Graph-RAG accuracy: agent graph OFF vs ON (needs dev server; paid)
 ```
 
 ### Deployment to Railway
@@ -237,7 +263,7 @@ lib/
     llm.ts              LLM CLIENT: OpenAI wrapper + llmJSON()
   graph/                ── GRAPH RAG domain ──
     relationships.ts    recovers the implicit join edges (curated + auto-inferred, no FKs)
-    schema-graph.ts     builds the schema graph + retrieveSubgraph / findJoinPath
+    schema-graph.ts     builds + verifies the schema graph, retrieveSubgraph (Graph RAG retrieval)
   db/                   ── CLICKHOUSE domain ──
     clickhouse.ts       DATA ACCESS: read-only query layer (runSelect / describeTable)
     catalog.ts          cached warehouse catalog (getCatalog / invalidateCatalog)

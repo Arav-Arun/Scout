@@ -1,18 +1,20 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // AGENT PHASES  ·  lib/agent/phases.ts
 //
-// The five steps of the pipeline, one function each. Every phase takes the context
+// The six phases of the pipeline, one function each. Every phase takes the context
 // it needs plus `emit`, streams its own step chips, and returns its output. The
-// orchestrator (lib/workflow.ts) just calls them in order.
+// orchestrator (lib/agent/workflow.ts) just calls them in order.
 //
-//   discover → planAnalysis → inspect → analyze → synthesize
+//   discover → planAnalysis → relate → inspect → analyze → synthesize
+//                             └─ RELATE = Graph RAG retrieval (lib/graph/)
 //
-// Formatting/helpers live in ./context; the data layer in ../db/clickhouse; the LLM
-// client in ./llm; the prompts in ./prompts.
+// Formatting/helpers live in ./context; the data layer in ../db/clickhouse; the
+// graph in ../graph; the LLM client in ./llm; the prompts in ./prompts.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describeTable, runSelect, type TableInfo } from "../db/clickhouse";
 import { getCatalog, type Catalog } from "../db/catalog";
+import { profileColumns, formatColumnValues } from "../db/profile";
 import { getSchemaGraph, retrieveSubgraph, formatGraphForPrompt, summarizeSubgraph, type SubGraph } from "../graph/schema-graph";
 import { llmJSON } from "./llm";
 import { PLANNER_SYS, ANALYST_SYS, SYNTH_SYS } from "./prompts";
@@ -244,7 +246,7 @@ function enrichColumnError(message: string, sql: string, idx: ColumnIndex, sub: 
  * repeat until the model finishes. Returns the gathered results plus the SQL log
  * (for "Export SQL").
  */
-export async function analyze(plan: Plan, schemas: TableInfo[], sub: SubGraph, cat: Catalog, model: string, emit: Emit): Promise<{ results: AnalyzeResult[]; queries: ExecutedQuery[] }> {
+export async function analyze(plan: Plan, schemas: TableInfo[], sub: SubGraph, cat: Catalog, model: string, emit: Emit, opts?: { useValues?: boolean }): Promise<{ results: AnalyzeResult[]; queries: ExecutedQuery[] }> {
   const results: AnalyzeResult[] = [];
   const queries: ExecutedQuery[] = [];
   const planText = planBlock(plan);
@@ -253,12 +255,26 @@ export async function analyze(plan: Plan, schemas: TableInfo[], sub: SubGraph, c
   const colIndex = buildColumnIndex(schemas);
   const catalogText = `CATALOG (all tables):\n${compactCatalog(cat.tables, cat.rowCounts)}`;
 
+  // Sample the ACTUAL values of categorical columns so the analyst filters on real values
+  // (e.g. value_band IN ('High','VIP')) on the first try, instead of guessing a label or
+  // spending a query on SELECT DISTINCT. Cheap (LowCardinality dictionary reads) and fail-open.
+  let valuesBlock = "";
+  if (opts?.useValues !== false) {
+    const vid = stepId();
+    emit({ type: "step", id: vid, kind: "inspect", status: "running", label: "Sampling column values" });
+    const profiles = await profileColumns(schemas);
+    const valuesText = formatColumnValues(profiles);
+    valuesBlock = valuesText ? `\n\n${valuesText}` : "";
+    const n = profiles.reduce((s, p) => s + p.columns.length, 0);
+    emit({ type: "step", id: vid, kind: "inspect", status: "done", label: "Sampled column values", detail: `${n} categorical column${n === 1 ? "" : "s"}` });
+  }
+
   for (let i = 0; i < MAX_QUERIES; i++) {
     let decision: { done?: boolean; purpose?: string; sql?: string; finding?: string };
     try {
       decision = await llmJSON(
         ANALYST_SYS,
-        `${planText}\n\nSCHEMA (chosen tables):\n${schemaBlock(schemas)}${graphBlock}\n\n${catalogText}\n\nRESULTS SO FAR:\n${resultsBlock(results)}\n\nDecide the next query, or finish.`,
+        `${planText}\n\nSCHEMA (chosen tables):\n${schemaBlock(schemas)}${graphBlock}${valuesBlock}\n\n${catalogText}\n\nRESULTS SO FAR:\n${resultsBlock(results)}\n\nDecide the next query, or finish.`,
         model,
         900,
       );
