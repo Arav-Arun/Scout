@@ -15,7 +15,6 @@ import type { UITurn, AgentBlock } from "@/lib/types";
 import {
   SendIcon,
   SparkIcon,
-  ChevronIcon,
   PanelLeftIcon,
   PaperclipIcon,
   GearIcon,
@@ -327,11 +326,6 @@ const SUGGESTIONS = [
 function EmptyState({ onPick, onUploadClick }: { onPick: (t: string) => void; onUploadClick: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center text-center gap-6 py-8 px-4 animate-fade-up">
-      {/* Visual Badge/Icon */}
-      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand/10 text-brand shadow-sm border border-brand/15">
-        <DatabaseIcon className="h-7 w-7" />
-      </div>
-
       <div>
         <h2 className="text-[22px] font-extrabold tracking-tight text-ink">Ask your data anything</h2>
         <p className="mt-2.5 max-w-sm text-[13.5px] leading-relaxed text-ink-soft">

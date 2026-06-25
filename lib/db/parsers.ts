@@ -137,8 +137,6 @@ export function parseXlsx(buf: Buffer): string[][] {
 export interface InferredColumn {
   /** Sanitised ClickHouse-safe column name. */
   name: string;
-  /** Original header from the file. */
-  original: string;
   type: string;
 }
 
@@ -186,6 +184,6 @@ export function inferSchema(headers: string[], sampleRows: string[][]): Inferred
         ? "LowCardinality(String)"
         : "String";
     }
-    return { name, original: header, type };
+    return { name, type };
   });
 }

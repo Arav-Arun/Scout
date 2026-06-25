@@ -70,7 +70,6 @@ async function checkExisting(table: string): Promise<IngestResult | null> {
     if (rowCount > 0) {
       const columns: InferredColumn[] = tableInfo.columns.map((col) => ({
         name: col.name,
-        original: col.name,
         type: col.type,
       }));
       return { table, rowCount, columns, alreadyExists: true };

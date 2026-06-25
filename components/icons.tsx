@@ -8,12 +8,6 @@ export const CheckIcon = ({ className }: P) => (
   </svg>
 );
 
-export const ChevronIcon = ({ className }: P) => (
-  <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden>
-    <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
 export const ArrowLeftIcon = ({ className }: P) => (
   <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden>
     <path d="M10 4l-4 4 4 4M6 8h6.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />

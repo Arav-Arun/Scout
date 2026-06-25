@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ route?: string[] }> }
 ) {
   const { route } = await params;
