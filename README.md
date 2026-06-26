@@ -19,6 +19,94 @@ Event stream  →  Chat panel (live reasoning chips + narrative)
 
 ---
 
+## Architecture & flow
+
+**Agent architecture** — three library layers (`agent` / `graph` / `db`) behind a single streaming
+API, with the UI importing only `lib/types.ts`:
+
+```mermaid
+flowchart TB
+  subgraph UI["Browser — Next.js client"]
+    HOOK["useScoutAgent<br/>(state + NDJSON reader)"]
+    CHAT["ChatPanel<br/>(step chips + composer)"]
+    DASH["DashboardPanel + EChart"]
+    GMODAL["GraphModal<br/>(schema-graph viewer)"]
+  end
+
+  subgraph API["API — app/api route"]
+    CHATAPI["POST /api/chat<br/>(NDJSON stream)"]
+    UPAPI["POST /api/upload"]
+    GRAPHAPI["GET /api/graph"]
+  end
+
+  subgraph AGENT["lib/agent — 6-phase orchestrator"]
+    WF["workflow.ts"]
+    PH["phases.ts<br/>(+ column guard)"]
+    LLM["llm.ts + prompts.ts"]
+  end
+
+  subgraph GRAPH["lib/graph — Graph RAG"]
+    REL["relationships.ts<br/>(curated + inferred)"]
+    SG["schema-graph.ts<br/>(build/verify/retrieve/format)"]
+  end
+
+  subgraph DB["lib/db — ClickHouse layer"]
+    CH["clickhouse.ts<br/>(read-only)"]
+    CAT["catalog.ts<br/>(cached map)"]
+    PROF["profile.ts"]
+    ING["ingest.ts<br/>(write path)"]
+  end
+
+  OPENAI[["OpenAI API"]]
+  CLICK[["ClickHouse warehouse<br/>32 tables, no FKs"]]
+
+  CHAT --- HOOK
+  DASH --- HOOK
+  HOOK -->|question| CHATAPI
+  CHAT -->|file| UPAPI
+  GMODAL -->|fetch| GRAPHAPI
+
+  CHATAPI --> WF --> PH
+  PH --> LLM --> OPENAI
+  PH --> SG --> REL
+  PH --> CAT
+  PH --> PROF
+  CAT --> CH
+  PROF --> CH
+  SG --> CH --> CLICK
+  GRAPHAPI --> SG
+  UPAPI --> ING --> CLICK
+  CHATAPI -.->|NDJSON events| HOOK
+```
+
+**Program flow** — the six phases, the Graph-RAG ON/OFF switch (the A/B lever), and the bounded
+analyze loop:
+
+```mermaid
+flowchart TD
+  Q["User question<br/>POST /api/chat"] --> D
+
+  subgraph PIPE["runScoutWorkflow — lib/agent/workflow.ts"]
+    D["1 · DISCOVER<br/>cached warehouse map"] --> P
+    P["2 · PLAN<br/>interpret + pick seed tables"] --> CL{"needs clarification?"}
+    CL -->|yes| STOP["emit clarification, stop"]
+    CL -->|no| SW{"useGraph?"}
+    SW -->|ON| R["3 · RELATE (Graph RAG)<br/>seeds → subgraph + JOIN GRAPH"]
+    SW -->|OFF| RS["seeds only, no edges<br/>pre-RAG baseline = A/B OFF arm"]
+    R --> I
+    RS --> I
+    I["4 · INSPECT<br/>DESCRIBE ≤8 tables + sample values"] --> A
+    A["5 · ANALYZE loop (≤8)<br/>propose 1 SELECT → run → read ≤40 rows"]
+    A -->|"column guard repairs wrong-table refs"| A
+    A --> S["6 · SYNTHESIZE<br/>compose dashboard JSON"]
+  end
+
+  S --> OUT["dashboard event → UI"]
+  D -.->|step + text events| OUT
+```
+
+---
+
 ## 1. The problem this solves
 
 The warehouse is **32 interconnected tables** modelling a card-issuer / retail bank (~7.3M rows),
@@ -65,7 +153,22 @@ Classic RAG retrieves relevant *documents*. **Graph RAG retrieves a relevant *su
 knowledge graph** — so the model gets the nodes **and the relationships between them**. Scout's
 knowledge graph is the **schema graph**: *tables are nodes, recovered join keys are edges.* The
 whole engine is [`lib/graph/schema-graph.ts`](lib/graph/schema-graph.ts) +
-[`lib/graph/relationships.ts`](lib/graph/relationships.ts), in four stages.
+[`lib/graph/relationships.ts`](lib/graph/relationships.ts), in four stages:
+
+```mermaid
+flowchart LR
+  subgraph SRC["Edge sources — relationships.ts"]
+    CUR["CURATED_RELATIONSHIPS<br/>(incl. aliased keys)"]
+    INF["inferRelationships<br/>(*_id → parent, from catalog)"]
+  end
+  CUR --> B
+  INF --> B
+  B["1 · BUILD<br/>merge edges (curated wins),<br/>keep only real tables + cols"] --> V
+  V["2 · VERIFY<br/>probe 400 keys via IN-subquery semi-join<br/>drop 0% phantoms · mark verified / partial"] --> RET
+  SEEDS["planner seed tables"] --> RET
+  RET["3 · RETRIEVE — retrieveSubgraph<br/>BFS shortest join path · avoid hubs · enrich"] --> FMT
+  FMT["4 · FORMAT — formatGraphForPrompt<br/>JOIN GRAPH text → analyst LLM"]
+```
 
 ### 3.1 Build — nodes and edges
 
@@ -173,27 +276,31 @@ join) plus **2 single-table controls**. Ground truth for every question is compu
 ClickHouse with a known-correct query (never hardcoded), and scoring is applied identically to both
 arms, so the comparison is fair.
 
-What a representative pass shows:
+Averaged over **5 full `npm run db:eval` passes** (55 question-runs per arm):
 
-| Signal | Graph OFF | Graph ON |
+| Signal (mean of 5 runs) | Graph OFF | Graph ON |
 |---|---|---|
-| Recovered the required join | missed the harder ones (e.g. the 3-hop `rewards_ledger → cards → card_products` reward-points question — answered without the join) | recovered the join on every question, including the 3-hop and aliased-key cases |
-| Wrong-table / wrong-key SQL rejected by ClickHouse | **3** (one question burned 3 retries before recovering) | **0** |
-| Single-table controls | identical to ON | identical to OFF (graph correctly changes nothing) |
-| Final-answer accuracy | comparable (both answer the simple joins) | comparable (varies run-to-run) |
+| Answer accuracy — all 11 questions | 51% (28/55) | 53% (29/55) |
+| Answer accuracy — 9 join questions only | 40% (18/45) | 42% (19/45) |
+| Wrong-table / wrong-key SQL rejected by ClickHouse | **2.6 / run** (13 total) | **0.6 / run** (3 total) |
+| Run-to-run accuracy spread (std dev, all questions) | ±12.7 pts | ±4.0 pts |
+| Completed with a dashboard | 100% | 100% |
 
-**The honest reading.** Graph RAG's gain is in **join correctness and robustness**: it recovers the
-right join keys (especially multi-hop and aliased ones) and keeps the analyst's SQL valid, producing
-**zero** wrong-table query errors against OFF's several. On *final-answer accuracy* the two arms are
-close on this set, because most of these joins are simple enough that the planner already seeds both
-tables and the analyst joins them without help — so the accuracy delta is dominated by LLM sampling
-noise, not the graph. Where the planner *can't* see the path — multi-hop chains and the aliased keys
-in §4.1 — the graph is what makes the join possible at all. (A few questions, e.g. "most fraud alerts",
+**The honest reading (5-run average).** On *final-answer accuracy* the two arms are **~parity** — graph
+ON 53% vs OFF 51% overall (42% vs 40% on the join questions). That gap is within run-to-run sampling
+noise (OFF alone swung from 36% to 64% across the five passes), so we make **no "accuracy went up X%"
+claim**. Graph RAG's real, repeatable gain is **robustness**: it cut wrong-table / wrong-key SQL errors
+from **2.6 to 0.6 per run** (ON hit zero in 3 of the 5 passes) and made outcomes **~3× more consistent**
+(±4 vs ±13 points of run-to-run spread). Most of these joins are simple enough that the planner already
+seeds both tables and the analyst joins them without help, so accuracy is dominated by LLM sampling,
+not the graph. Where the planner *can't* see the path — the multi-hop chains and the aliased keys in
+§4.1 — the graph is what makes the join possible at all. (A few questions, e.g. "most fraud alerts",
 are missed by *both* arms: those are aggregation/interpretation errors the graph does not address — it
 fixes joins, not analytical reasoning.)
 
-> Re-run `npm run db:eval` (or `npm run db:eval -- 1 4` for a chunk) for a fresh measurement; the
-> end-to-end numbers vary run-to-run, while the §4.1 graph verification is deterministic.
+> The numbers above are the **mean of 5 full `npm run db:eval` passes**. Re-run it (or
+> `npm run db:eval -- 1 4` for a chunk) for a fresh measurement; the end-to-end numbers vary
+> run-to-run — hence the average — while the §4.1 graph verification is deterministic.
 
 ---
 

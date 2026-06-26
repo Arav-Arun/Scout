@@ -44,10 +44,9 @@ yarn-error.log*
 # local dev, seeding & test scripts — kept out of the public repo entirely
 /scripts/
 
-# internal docs
-/GUIDE.md
-/ARCHITECTURE.md
-/WALKTHROUGH.md
+# internal docs / notes — only README.md is tracked on the public repo
+*.md
+!README.md
 
 # typescript
 *.tsbuildinfo
