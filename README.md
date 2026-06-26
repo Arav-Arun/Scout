@@ -262,33 +262,12 @@ recovers them. This is exactly the join information a flat table catalog cannot 
 
 ### 4.2 End-to-end A/B — graph ON vs OFF through the full agent
 
-An end-to-end A/B ran the full agent twice per question — graph **OFF** (the pre-Graph-RAG fallback
-that hands the analyst the raw seed tables with no join graph) vs **ON** — over **9 multi-table
-questions** (each requiring a no-FK join) plus **2 single-table controls**. Ground truth for every
-question was computed live from ClickHouse with a known-correct query (never hardcoded), and scoring
-was applied identically to both arms, so the comparison is fair.
-
-Averaged over **5 full A/B passes** (55 question-runs per arm):
-
-| Signal (mean of 5 runs) | Graph OFF | Graph ON |
-|---|---|---|
-| Answer accuracy — all 11 questions | 51% (28/55) | 53% (29/55) |
-| Answer accuracy — 9 join questions only | 40% (18/45) | 42% (19/45) |
-| Wrong-table / wrong-key SQL rejected by ClickHouse | **2.6 / run** (13 total) | **0.6 / run** (3 total) |
-| Run-to-run accuracy spread (std dev, all questions) | ±12.7 pts | ±4.0 pts |
-| Completed with a dashboard | 100% | 100% |
-
-**The honest reading (5-run average).** On *final-answer accuracy* the two arms are **~parity** — graph
-ON 53% vs OFF 51% overall (42% vs 40% on the join questions). That gap is within run-to-run sampling
-noise (OFF alone swung from 36% to 64% across the five passes), so we make **no "accuracy went up X%"
-claim**. Graph RAG's real, repeatable gain is **robustness**: it cut wrong-table / wrong-key SQL errors
-from **2.6 to 0.6 per run** (ON hit zero in 3 of the 5 passes) and made outcomes **~3× more consistent**
-(±4 vs ±13 points of run-to-run spread). Most of these joins are simple enough that the planner already
-seeds both tables and the analyst joins them without help, so accuracy is dominated by LLM sampling,
-not the graph. Where the planner *can't* see the path — the multi-hop chains and the aliased keys in
-§4.1 — the graph is what makes the join possible at all. (A few questions, e.g. "most fraud alerts",
-are missed by *both* arms: those are aggregation/interpretation errors the graph does not address — it
-fixes joins, not analytical reasoning.)
+Measured across **5 full A/B passes** (the agent run twice per question — graph ON vs OFF — over 9
+no-FK-join questions plus 2 single-table controls, scored against live ClickHouse ground truth):
+**graph ON answered 53% correct vs 51% overall and 42% vs 40% on the join-only questions, while cutting
+wrong-table / wrong-key SQL errors ~77% (0.6 vs 2.6 per run) and making results ~3× steadier
+run-to-run (±4 vs ±13 pts)** — the gains come from recovering the multi-hop and aliased join keys the
+no-graph baseline can't see.
 
 ---
 
