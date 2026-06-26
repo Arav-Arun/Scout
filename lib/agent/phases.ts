@@ -1,9 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // AGENT PHASES  ·  lib/agent/phases.ts
 //
-// The six phases of the pipeline, one function each. Every phase takes the context
-// it needs plus `emit`, streams its own step chips, and returns its output. The
-// orchestrator (lib/agent/workflow.ts) just calls them in order.
+// The six phases of the pipeline, one function each.
+// Every phase takes the context it needs plus `emit`, streams its own step chips, and returns its output.
+// The orchestrator (lib/agent/workflow.ts) just calls them in order.
 //
 //   discover → planAnalysis → relate → inspect → analyze → synthesize
 //                             └─ RELATE = Graph RAG retrieval (lib/graph/)

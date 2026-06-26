@@ -2,8 +2,7 @@
 // WAREHOUSE CATALOG  ·  lib/db/catalog.ts
 //
 // Connect-once, cache-in-memory map of the warehouse: every table's columns plus a
-// free row-count estimate. The agent used to re-list every table + column on EVERY
-// question; instead we discover the catalog ONCE and keep it in module memory.
+// free row-count estimate.
 //
 // ▸ CALL MAP:
 //   - lib/agent/phases.ts (DISCOVER) calls getCatalog() once per analysis.

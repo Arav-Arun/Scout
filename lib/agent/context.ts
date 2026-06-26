@@ -132,8 +132,7 @@ export function schemaBlock(infos: TableInfo[]): string {
 
 /**
  * Per-numeric-column sum/min/max over a result's rows, computed in code so the model never
- * has to add up rows itself (that hand-summing is how it produced a total SMALLER than one of
- * its parts). For a complete breakdown the column `sum` IS the grand total and `max` is the
+ * has to add up rows itself. For a complete breakdown the column `sum` IS the grand total and `max` is the
  * largest part - both exact and mutually consistent.
  */
 function columnAggregates(rows: Record<string, unknown>[], rowCount: number): string {

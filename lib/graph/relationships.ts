@@ -1,8 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // RELATIONSHIP KNOWLEDGE  ·  lib/graph/relationships.ts
 //
-// The warehouse has NO foreign keys (ClickHouse has none) - tables are linked only
-// by shared key columns. This file is where Scout *recovers* that implicit graph:
+// Tables are linked only by shared key columns. This file is where Scout recovers that implicit graph:
 //
 //   1. A CURATED manifest of join edges (authoritative). It captures the edges a
 //      column-name match alone would miss - aliased keys like

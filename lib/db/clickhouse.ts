@@ -49,8 +49,6 @@ export function getClient(): ClickHouseClient {
 }
 
 /**
- * Throw unless `sql` is a single read-only statement.
- *
  * Read-only is enforced by an allowlist on the leading statement keyword plus a
  * ban on stacked statements. A statement that begins with SELECT/WITH/DESCRIBE/
  * SHOW/EXPLAIN and contains no `;` cannot mutate data - write/DDL verbs (INSERT,

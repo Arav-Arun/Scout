@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────--------
 // Scout's warehouse is a graph: tables are NODES and the join keys recovered in
 // relationships.ts are EDGES.
-// Graph RAG retrieves a relevant *subgraph*. Given the tables the planner seeded, we hand the
+// Graph RAG retrieves a relevant subgraph. Given the tables the planner seeded, we hand the
 // analyst just those tables, the bridge tables needed to join them, and the EXACT join
 // keys - instead of dumping every table flat into the prompt and hoping it guesses the
 // joins (this warehouse has no foreign keys).
