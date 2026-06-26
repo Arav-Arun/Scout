@@ -159,9 +159,9 @@ flowchart LR
 
 ### 3.1 Build — nodes and edges
 
-- **Nodes** — every table in the live catalog (`system.columns`), carrying its column list and a
+- **Nodes** - every table in the live catalog (`system.columns`), carrying its column list and a
   free row-count estimate (`buildSchemaGraph`).
-- **Edges** — the implicit join keys, recovered two ways and merged:
+- **Edges** - the implicit join keys, recovered two ways and merged:
   - **Curated manifest** (`CURATED_RELATIONSHIPS`) - authoritative, hand-declared edges. This is the
     source of truth and captures the **aliased** keys a name match can't see (e.g.
     `card_transactions.merchant` → `merchants.merchant_name`).
@@ -173,7 +173,7 @@ flowchart LR
   `buildSchemaGraph()` merges both (**curated wins on conflict**) and every edge must exist in the
   live catalog — both tables present, both join columns real — defending against stale curation.
 
-### 3.2 Verify — drop phantom joins against live data
+### 3.2 Verify - drop phantom joins against live data
 
 A shared column name does **not** prove two columns join. `account_transactions.txn_id` and
 `card_transactions.txn_id` share a name yet have **zero** overlapping values. So `verifyEdges()`
@@ -195,7 +195,7 @@ connected subgraph plus the exact join map:
 3. **Enrich** - fill the remaining budget (default 8 tables) with the seeds' direct neighbours,
    **verified edges first** (typically the dimension tables).
    
-### 3.4 Inject — and repair the analyst's SQL
+### 3.4 Inject - and repair the analyst's SQL
 
 - `formatGraphForPrompt()` renders the subgraph as a **`JOIN GRAPH`** block of
   `tableA.colA = tableB.colB` lines, fed to the Analyst LLM with an instruction to join **only** on
@@ -214,50 +214,13 @@ DISCOVER → PLAN → [ RELATE ] → INSPECT → ANALYZE↺ → SYNTHESIZE
 ```
 
 The **RELATE** phase ([`lib/agent/phases.ts`](lib/agent/phases.ts)) sits between PLAN and INSPECT.
-The change is **additive and safe**: if the graph is empty or the seeds are unreachable, RELATE falls
-back to the seed tables and the pipeline behaves exactly as it did pre-Graph-RAG.
 
 You can see the exact graph the agent walks in the in-app **Schema Knowledge Graph** viewer (graph
 icon, top of the chat panel), also served as JSON at `/api/graph`.
 
----
 
-## 4. Does Graph RAG actually help? — verified results
 
-Two independent kinds of evidence. The first is **deterministic and reproducible** (it doesn't depend
-on LLM sampling); the second is an end-to-end A/B through the full agent.
-
-### 4.1 The recovered graph is verified against live data
-
-This is the core claim, and it is checkable with one request (`GET /api/graph`) — every edge is probed
-against the live warehouse before it's trusted (Section 3.2). Measured on the live warehouse:
-
-| Check | Result |
-|---|---|
-| Tables (nodes) | **32** |
-| Join edges recovered | **63**, every one **verified against live data** (0 unverified, 0 phantom kept) |
-| **Aliased** joins recovered — different column names, so a name-match heuristic *cannot* find them | `loan_book.branch = branches.branch_id` (100% overlap) · `support_tickets.assigned_employee_id = employees.employee_id` (100%) · `card_transactions.merchant = merchants.merchant_name` (100%) · `kyc_records.verified_by_employee_id = employees.employee_id` (94%) |
-| **Phantom** join dropped — same column name, but the values never join | `account_transactions.txn_id ↔ card_transactions.txn_id` measured at **0% overlap → dropped** |
-| Real edges (sanity) | `collections.loan_id → loan_book.loan_id` = 100% · `fraud_alerts.txn_id → card_transactions.txn_id` = 100% |
-
-The phantom case is the sharpest illustration: two `txn_id` columns share a name but belong to
-different transaction systems, so they have **zero** overlapping values — a name-match would create a
-join that silently returns nothing. Scout's verification catches and drops it. The aliased cases are
-the opposite: the columns have *different* names but really do join (100%), and only the curated graph
-recovers them. This is exactly the join information a flat table catalog cannot give the model.
-
-### 4.2 End-to-end A/B — graph ON vs OFF through the full agent
-
-Measured across **5 full A/B passes** (the agent run twice per question — graph ON vs OFF — over 9
-no-FK-join questions plus 2 single-table controls, scored against live ClickHouse ground truth):
-**graph ON answered 53% correct vs 51% overall and 42% vs 40% on the join-only questions, while cutting
-wrong-table / wrong-key SQL errors ~77% (0.6 vs 2.6 per run) and making results ~3× steadier
-run-to-run (±4 vs ±13 pts)** — the gains come from recovering the multi-hop and aliased join keys the
-no-graph baseline can't see.
-
----
-
-## 5. The 6-phase pipeline
+## 4. The 6-phase pipeline
 
 Instead of one unconstrained tool-calling loop, Scout decomposes analysis into six typed phases
 (orchestrated in [`lib/agent/workflow.ts`](lib/agent/workflow.ts), one function each in
