@@ -246,7 +246,7 @@ function enrichColumnError(message: string, sql: string, idx: ColumnIndex, sub: 
  * repeat until the model finishes. Returns the gathered results plus the SQL log
  * (for "Export SQL").
  */
-export async function analyze(plan: Plan, schemas: TableInfo[], sub: SubGraph, cat: Catalog, model: string, emit: Emit, opts?: { useValues?: boolean }): Promise<{ results: AnalyzeResult[]; queries: ExecutedQuery[] }> {
+export async function analyze(plan: Plan, schemas: TableInfo[], sub: SubGraph, cat: Catalog, model: string, emit: Emit): Promise<{ results: AnalyzeResult[]; queries: ExecutedQuery[] }> {
   const results: AnalyzeResult[] = [];
   const queries: ExecutedQuery[] = [];
   const planText = planBlock(plan);
@@ -258,16 +258,13 @@ export async function analyze(plan: Plan, schemas: TableInfo[], sub: SubGraph, c
   // Sample the ACTUAL values of categorical columns so the analyst filters on real values
   // (e.g. value_band IN ('High','VIP')) on the first try, instead of guessing a label or
   // spending a query on SELECT DISTINCT. Cheap (LowCardinality dictionary reads) and fail-open.
-  let valuesBlock = "";
-  if (opts?.useValues !== false) {
-    const vid = stepId();
-    emit({ type: "step", id: vid, kind: "inspect", status: "running", label: "Sampling column values" });
-    const profiles = await profileColumns(schemas);
-    const valuesText = formatColumnValues(profiles);
-    valuesBlock = valuesText ? `\n\n${valuesText}` : "";
-    const n = profiles.reduce((s, p) => s + p.columns.length, 0);
-    emit({ type: "step", id: vid, kind: "inspect", status: "done", label: "Sampled column values", detail: `${n} categorical column${n === 1 ? "" : "s"}` });
-  }
+  const vid = stepId();
+  emit({ type: "step", id: vid, kind: "inspect", status: "running", label: "Sampling column values" });
+  const profiles = await profileColumns(schemas);
+  const valuesText = formatColumnValues(profiles);
+  const valuesBlock = valuesText ? `\n\n${valuesText}` : "";
+  const n = profiles.reduce((s, p) => s + p.columns.length, 0);
+  emit({ type: "step", id: vid, kind: "inspect", status: "done", label: "Sampled column values", detail: `${n} categorical column${n === 1 ? "" : "s"}` });
 
   for (let i = 0; i < MAX_QUERIES; i++) {
     let decision: { done?: boolean; purpose?: string; sql?: string; finding?: string };

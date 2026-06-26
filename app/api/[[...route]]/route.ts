@@ -65,7 +65,7 @@ export async function POST(
   const path = route?.[0];
 
   if (path === "chat") {
-    let body: { messages?: ChatTurn[]; graph?: boolean; values?: boolean };
+    let body: { messages?: ChatTurn[] };
     try {
       body = await request.json();
     } catch {
@@ -73,9 +73,6 @@ export async function POST(
     }
 
     const history = Array.isArray(body.messages) ? body.messages : [];
-    // A/B flags for the Graph-RAG eval harness (scripts/eval_graph.mjs); both default ON.
-    const useGraph = body.graph !== false;
-    const useValues = body.values !== false;
 
     const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
@@ -84,7 +81,7 @@ export async function POST(
           controller.enqueue(encoder.encode(JSON.stringify(e) + "\n"));
         };
         try {
-          await runScoutWorkflow(history, send, { useGraph, useValues });
+          await runScoutWorkflow(history, send);
           send({ type: "done" });
         } catch (e) {
           send({ type: "error", message: e instanceof Error ? e.message : String(e) });

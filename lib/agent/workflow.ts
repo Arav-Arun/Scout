@@ -29,7 +29,6 @@ const noDashboard = (clarified = false): AgentResult => ({ dashboard: null, quer
 export async function runScoutWorkflow(
   history: ChatTurn[],
   emit: Emit,
-  options?: { useGraph?: boolean; useValues?: boolean },
 ): Promise<AgentResult> {
   const question = lastUser(history);
   const model = process.env.OPENAI_MODEL || "gpt-4o";
@@ -51,18 +50,15 @@ export async function runScoutWorkflow(
 
   // 3 · RELATE ─ walk the schema graph to expand the seed tables with the bridge
   //     tables that join them, and recover the exact join keys (no FKs in ClickHouse).
-  //     The A/B eval can disable the graph (options.useGraph=false) to measure its lift:
-  //     that path falls back to the planner's seed tables with no join graph (the pre-RAG behaviour).
-  const sub: SubGraph = options?.useGraph === false
-    ? { seeds: plan.tables || [], tables: plan.tables || [], edges: [] }
-    : await relate(plan, emit);
+  //     Falls back to the planner's seed tables (no join graph) if the graph is unavailable.
+  const sub: SubGraph = await relate(plan, emit);
 
   // 4 · INSPECT ─ exact schemas for the subgraph's tables.
   const schemas = await inspect(sub.tables, cat, emit);
 
   // 5 · ANALYZE ─ the bounded query loop, armed with the JOIN GRAPH + a pre-flight
   //     column check that uses it to catch wrong-table column refs before they run.
-  const { results, queries } = await analyze(plan, schemas, sub, cat, model, emit, { useValues: options?.useValues !== false });
+  const { results, queries } = await analyze(plan, schemas, sub, cat, model, emit);
 
   // 6 · SYNTHESIZE ─ compose the dashboard (emits it; may be null on failure).
   //     `cat` carries the exact warehouse facts (table count, total rows) so the

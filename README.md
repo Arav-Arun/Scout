@@ -77,8 +77,7 @@ flowchart TB
   CHATAPI -.->|NDJSON events| HOOK
 ```
 
-**Program flow** — the six phases, the Graph-RAG ON/OFF switch (the A/B lever), and the bounded
-analyze loop:
+**Program flow** — the six phases and the bounded analyze loop:
 
 ```mermaid
 flowchart TD
@@ -88,12 +87,9 @@ flowchart TD
     D["1 · DISCOVER<br/>cached warehouse map"] --> P
     P["2 · PLAN<br/>interpret + pick seed tables"] --> CL{"needs clarification?"}
     CL -->|yes| STOP["emit clarification, stop"]
-    CL -->|no| SW{"useGraph?"}
-    SW -->|ON| R["3 · RELATE (Graph RAG)<br/>seeds → subgraph + JOIN GRAPH"]
-    SW -->|OFF| RS["seeds only, no edges<br/>pre-RAG baseline = A/B OFF arm"]
-    R --> I
-    RS --> I
-    I["4 · INSPECT<br/>DESCRIBE ≤8 tables + sample values"] --> A
+    CL -->|no| R["3 · RELATE (Graph RAG)<br/>seeds → subgraph + JOIN GRAPH<br/>(falls back to seeds if graph unavailable)"]
+    R --> I["4 · INSPECT<br/>DESCRIBE ≤8 tables + sample values"]
+    I --> A
     A["5 · ANALYZE loop (≤8)<br/>propose 1 SELECT → run → read ≤40 rows"]
     A -->|"column guard repairs wrong-table refs"| A
     A --> S["6 · SYNTHESIZE<br/>compose dashboard JSON"]
@@ -233,8 +229,7 @@ DISCOVER → PLAN → [ RELATE ] → INSPECT → ANALYZE↺ → SYNTHESIZE
 
 The **RELATE** phase ([`lib/agent/phases.ts`](lib/agent/phases.ts)) sits between PLAN and INSPECT.
 The change is **additive and safe**: if the graph is empty or the seeds are unreachable, RELATE falls
-back to the seed tables and the pipeline behaves exactly as it did pre-Graph-RAG. That same fallback
-is the OFF arm of the benchmark below.
+back to the seed tables and the pipeline behaves exactly as it did pre-Graph-RAG.
 
 You can see the exact graph the agent walks in the in-app **Schema Knowledge Graph** viewer (graph
 icon, top of the chat panel), also served as JSON at `/api/graph`.
@@ -267,14 +262,13 @@ recovers them. This is exactly the join information a flat table catalog cannot 
 
 ### 4.2 End-to-end A/B — graph ON vs OFF through the full agent
 
-`npm run db:eval` ([`scripts/eval_graph.mjs`](scripts/eval_graph.mjs)) runs the full agent twice per
-question — graph **OFF** (`{graph:false}`, the pre-Graph-RAG fallback that hands the analyst the raw
-seed tables with no join graph) vs **ON** — over **9 multi-table questions** (each requiring a no-FK
-join) plus **2 single-table controls**. Ground truth for every question is computed live from
-ClickHouse with a known-correct query (never hardcoded), and scoring is applied identically to both
-arms, so the comparison is fair.
+An end-to-end A/B ran the full agent twice per question — graph **OFF** (the pre-Graph-RAG fallback
+that hands the analyst the raw seed tables with no join graph) vs **ON** — over **9 multi-table
+questions** (each requiring a no-FK join) plus **2 single-table controls**. Ground truth for every
+question was computed live from ClickHouse with a known-correct query (never hardcoded), and scoring
+was applied identically to both arms, so the comparison is fair.
 
-Averaged over **5 full `npm run db:eval` passes** (55 question-runs per arm):
+Averaged over **5 full A/B passes** (55 question-runs per arm):
 
 | Signal (mean of 5 runs) | Graph OFF | Graph ON |
 |---|---|---|
@@ -295,10 +289,6 @@ not the graph. Where the planner *can't* see the path — the multi-hop chains a
 §4.1 — the graph is what makes the join possible at all. (A few questions, e.g. "most fraud alerts",
 are missed by *both* arms: those are aggregation/interpretation errors the graph does not address — it
 fixes joins, not analytical reasoning.)
-
-> The numbers above are the **mean of 5 full `npm run db:eval` passes**. Re-run it (or
-> `npm run db:eval -- 1 4` for a chunk) for a fresh measurement; the end-to-end numbers vary
-> run-to-run — hence the average — while the §4.1 graph verification is deterministic.
 
 ---
 
@@ -361,13 +351,12 @@ npm run db:seed-graph
 npm run dev          # http://localhost:3000
 ```
 
-### Dev & evaluation utilities
+### Dev utilities
 
 ```bash
 npm run db:tables      # list every table with column + row counts
 npm run db:peek        # browse a table's data:  npm run db:peek -- <table> [limit]
 npm run db:seed-graph  # (re)generate the interconnected no-FK warehouse (idempotent)
-npm run db:eval        # the Graph-RAG A/B benchmark (needs the dev server; uses paid LLM calls)
 ```
 
 ### Deploy (Railway)
@@ -395,7 +384,7 @@ hooks/useScoutAgent.ts     client state: turns, dashboard versions, streaming, u
 lib/
   types.ts                 shared contract: streaming events + dashboard shape
   agent/
-    workflow.ts            the 6-phase orchestrator (+ the graph ON/OFF switch)
+    workflow.ts            the 6-phase orchestrator
     phases.ts              the six phases + the graph-backed column guard + dashboard coercion
     context.ts             shared shapes (Plan/AnalyzeResult) + prompt formatters
     prompts.ts             all LLM system prompts
@@ -411,7 +400,6 @@ lib/
     profile.ts             samples categorical column values for the analyst
 scripts/
   seed_graph.mjs           generates the interconnected no-FK warehouse
-  eval_graph.mjs           the Graph-RAG A/B benchmark (Section 4)
   ch_tables.mjs / peek.sh  warehouse inspection helpers
 ```
 
