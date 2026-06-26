@@ -104,16 +104,9 @@ flowchart TD
 ## 1. The problem this solves
 
 The warehouse is **32 interconnected tables** modelling a card-issuer / retail bank (~7.3M rows),
-and — by design — it has **no foreign keys**. ClickHouse has no FK constraints at all; tables are
-linked only by *shared key columns*, and some of those keys are **aliased** (`loan_book.branch` →
+and by design — it has no foreign keys.Tables are linked only by *shared key columns*, and some of those keys are **aliased** (`loan_book.branch` →
 `branches.branch_id`, `collections.assigned_employee_id` → `employees.employee_id`), so a column-name
 match alone can't even find them.
-
-A flat "here are all the tables, pick some" catalog works at 6 tables. At 32, a single business
-question — *"which loan product recovered the most across collections?"* — routinely spans a join
-chain the planner can't see in one shot, so the model guesses the join key and gets it wrong: it
-answers from the wrong table, or writes SQL that ClickHouse rejects. **Graph RAG is what makes the
-joins reliable.** Section 4 shows the measured before/after.
 
 ---
 
@@ -143,10 +136,10 @@ builds it (idempotent).
 
 ## 3. Graph RAG, in detail
 
-Classic RAG retrieves relevant *documents*. **Graph RAG retrieves a relevant *subgraph* of a
-knowledge graph** — so the model gets the nodes **and the relationships between them**. Scout's
-knowledge graph is the **schema graph**: *tables are nodes, recovered join keys are edges.* The
-whole engine is [`lib/graph/schema-graph.ts`](lib/graph/schema-graph.ts) +
+Classic RAG retrieves relevant *documents*. Graph RAG retrieves a relevant *subgraph* of a
+knowledge graph so the model gets the nodes and the relationships between them.
+Scout's knowledge graph is the **schema graph**: tables are nodes, recovered join keys are edges.
+The whole engine is [`lib/graph/schema-graph.ts`](lib/graph/schema-graph.ts) +
 [`lib/graph/relationships.ts`](lib/graph/relationships.ts), in four stages:
 
 ```mermaid
@@ -169,10 +162,10 @@ flowchart LR
 - **Nodes** — every table in the live catalog (`system.columns`), carrying its column list and a
   free row-count estimate (`buildSchemaGraph`).
 - **Edges** — the implicit join keys, recovered two ways and merged:
-  - **Curated manifest** (`CURATED_RELATIONSHIPS`) — authoritative, hand-declared edges. This is the
+  - **Curated manifest** (`CURATED_RELATIONSHIPS`) - authoritative, hand-declared edges. This is the
     source of truth and captures the **aliased** keys a name match can't see (e.g.
     `card_transactions.merchant` → `merchants.merchant_name`).
-  - **Auto-inference** (`inferRelationships`) — recovered purely from the catalog with zero FK
+  - **Auto-inference** (`inferRelationships`) - recovered purely from the catalog with zero FK
     metadata: any key-like column (`*_id`, or a known join column in `PARENT_OF_COLUMN`) that exists
     both on a table and on its **canonical parent** becomes an edge. This keeps the graph correct
     when **new tables are uploaded**, and proves relationships are discoverable with no FK metadata.
@@ -185,30 +178,23 @@ flowchart LR
 A shared column name does **not** prove two columns join. `account_transactions.txn_id` and
 `card_transactions.txn_id` share a name yet have **zero** overlapping values. So `verifyEdges()`
 samples each child key (400 distinct values) and measures the fraction that actually resolves to the
-parent — an `IN (subquery)` **semi-join**, *not* a `LEFT JOIN` (ClickHouse fills unmatched LEFT-JOIN
-cells with type defaults, which would make every edge look like a 100% match). Edges at 0% overlap
-are **dropped as phantoms**; the rest are marked `verified` (≥50%) or flagged **partial** so the
-analyst is warned a join is lossy. It **fails open**: a probe timeout leaves an edge un-judged rather
-than dropping a possibly-real key.
+parent.
+Edges at 0% overlap are **dropped as phantoms**; the rest are marked `verified` (≥50%) or flagged **partial** so the
+analyst is warned a join is lossy.
+It **fails open**: a probe timeout leaves an edge un-judged rather than dropping a possibly-real key.
 
-### 3.3 Retrieve — `retrieveSubgraph()`
+### 3.3 Retrieve - `retrieveSubgraph()`
 
 The heart of it. Given the **seed tables** the planner picked from the question, it returns the
 connected subgraph plus the exact join map:
 
 1. **Keep the seeds.**
-2. **Connect them** — for each remaining seed, find the shortest **join path** (fewest hops) to the
-   already-included set with a breadth-first search (`bfsPath`), pulling in the **bridge tables**
+2. **Connect them** - for each remaining seed, find the shortest **join path** (fewest hops) to the
+   already included set with a breadth-first search (`bfsPath`), pulling in the **bridge tables**
    along the way. (A question spanning `customers` + `branches` automatically pulls in `accounts`.)
-3. **Enrich** — fill the remaining budget (default 8 tables) with the seeds' direct neighbours,
+3. **Enrich** - fill the remaining budget (default 8 tables) with the seeds' direct neighbours,
    **verified edges first** (typically the dimension tables).
-
-**Hub avoidance.** `customer_id` lives in ~24 tables and `city` is everywhere — they are **hub
-columns**. If retrieval bridged through them, every question would drag the whole warehouse in
-through `customers`. So traversal **avoids hub edges first** and only falls back to them when no
-other path exists — a question about `disputes` reaches `card_transactions` directly instead of
-detouring through the customer hub.
-
+   
 ### 3.4 Inject — and repair the analyst's SQL
 
 - `formatGraphForPrompt()` renders the subgraph as a **`JOIN GRAPH`** block of
@@ -277,76 +263,21 @@ Instead of one unconstrained tool-calling loop, Scout decomposes analysis into s
 (orchestrated in [`lib/agent/workflow.ts`](lib/agent/workflow.ts), one function each in
 [`lib/agent/phases.ts`](lib/agent/phases.ts)):
 
-1. **DISCOVER** — map the warehouse once (cached): tables, columns, free row-count estimates.
-2. **PLAN** — the Planner LLM interprets the (often vague) question, fixes metric definitions, picks
+1. **DISCOVER** - map the warehouse once (cached): tables, columns, free row-count estimates.
+2. **PLAN** - the Planner LLM interprets the (often vague) question, fixes metric definitions, picks
    seed tables, and decides if it must ask for clarification.
-3. **RELATE (Graph RAG)** — walk the schema graph from the seeds to the connected subgraph + exact
+3. **RELATE (Graph RAG)** - walk the schema graph from the seeds to the connected subgraph + exact
    join keys (Section 3).
-4. **INSPECT** — fetch exact typed schemas (`DESCRIBE`) for the subgraph's tables (up to 8).
-5. **ANALYZE** — a bounded loop (≤ 8 queries): the Analyst LLM, armed with the `JOIN GRAPH` and
+4. **INSPECT** - fetch exact typed schemas (`DESCRIBE`) for the subgraph's tables (up to 8).
+5. **ANALYZE** - a bounded loop (≤ 8 queries): the Analyst LLM, armed with the `JOIN GRAPH` and
    sampled categorical values, proposes one SELECT, runs it, reads ≤ 40 result rows, and iterates.
    The graph-backed column guard repairs wrong-table references here.
-6. **SYNTHESIZE** — the Synthesizer LLM composes the structured JSON dashboard, using exact
+6. **SYNTHESIZE** - the Synthesizer LLM composes the structured JSON dashboard, using exact
    warehouse facts (table/row counts) so it never guesses structural numbers.
 
 Every phase streams its own step chip to the UI, so the user watches the reasoning live.
 
----
-
-## 6. ClickHouse engineering
-
-ClickHouse is a column-oriented DBMS built for sub-second aggregation over billions of rows; Scout
-leans on that fully:
-
-- **Server-side aggregation.** All maths runs in ClickHouse. The LLM only ever sees ≤ 40-row result
-  previews, keeping tokens low and latency down.
-- **Read-only by policy.** The analytics path may only run `SELECT`/`DESCRIBE`/`SHOW`
-  (`assertReadOnly` in [`lib/db/clickhouse.ts`](lib/db/clickhouse.ts)); the one write path is gated
-  file ingestion ([`lib/db/ingest.ts`](lib/db/ingest.ts)).
-- **Type inference on upload** ([`lib/db/parsers.ts`](lib/db/parsers.ts)): identifier-like columns
-  stay `String`; repetitive text becomes `LowCardinality(String)` (dictionary-compressed, faster
-  `GROUP BY`); money becomes `Decimal(18,4)` (no float rounding); dates/datetimes are detected. The
-  `MergeTree ORDER BY` key is chosen from low-cardinality columns for index efficiency.
-- **Catalog cached once.** The warehouse map (and the schema graph built on top of it) is discovered
-  a single time and reused across follow-up questions; invalidated automatically after an upload.
-
----
-
-## 7. Quick start
-
-```bash
-# 1. Install
-npm install
-
-# 2. Configure env
-cp .env.example .env
-#   OPENAI_API_KEY, OPENAI_MODEL (gpt-4o)
-#   CLICKHOUSE_HOST / USER / PASSWORD / DATABASE
-
-# 3. (optional) build the 32-table demo warehouse
-npm run db:seed-graph
-
-# 4. Run
-npm run dev          # http://localhost:3000
-```
-
-### Dev utilities
-
-```bash
-npm run db:tables      # list every table with column + row counts
-npm run db:peek        # browse a table's data:  npm run db:peek -- <table> [limit]
-npm run db:seed-graph  # (re)generate the interconnected no-FK warehouse (idempotent)
-```
-
-### Deploy (Railway)
-
-Link the repo, set `OPENAI_API_KEY`, `OPENAI_MODEL`, and `CLICKHOUSE_HOST/USER/PASSWORD/DATABASE`
-under **Variables**. Railway auto-detects Next.js via Nixpacks, runs `npm run build`, and starts with
-`npm run start` on `$PORT`.
-
----
-
-## 8. Project structure
+## 6. Project structure
 
 The three concerns are separated by folder. The **UI** (`app/*.tsx`, `components/`, `hooks/`) imports
 only `lib/types.ts`; the **agent** lives in `lib/agent/`; the **graph** in `lib/graph/`; the
@@ -383,5 +314,5 @@ scripts/
 ```
 
 ---
-- **Scope:** the agent caps itself at ~8 queries per analysis; the graph's edge-verification probes
+**Scope:** the agent caps itself at ~8 queries per analysis; the graph's edge-verification probes
   are sampled (400 keys) and cached, so they stay cheap on multi-million-row tables.
