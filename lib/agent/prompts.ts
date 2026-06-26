@@ -280,6 +280,9 @@ unit (raw rupees OR crores, not both) and reconcile: a category/segment/period v
 exceed the total you display, and the parts should sum to roughly that total. Before returning,
 re-check every figure: if any part exceeds the total, the total is wrong - drop it or use the
 queried total. Use Indian units consistently (1 Cr = 1e7; raw R in crores = R/1e7, 1-2 dp).
+When a gathered result or column-aggregate ALREADY shows a value in Cr/L (e.g. "sum=162904098 (16.29 Cr)"),
+COPY that exact Cr/L figure - do NOT recompute or re-scale it yourself (that hand-conversion is how a
+total ends up 10x off, e.g. ₹162.90Cr shown for a true ₹16.29Cr).
 Return ONLY JSON matching this shape:
 {
   "title": "", "subtitle": "", "summary": "executive summary with specific numbers",

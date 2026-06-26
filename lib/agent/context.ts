@@ -123,6 +123,25 @@ function fmtCount(n: number): string {
   return String(n);
 }
 
+/**
+ * Exact Indian-unit (crore/lakh) rendering of a magnitude. We compute this in code and
+ * hand it to the model so it copies the right figure instead of doing R/1e7 in its head -
+ * the hand conversion is how a hero metric ended up 10x too large (₹162.90Cr for ₹16.29Cr),
+ * a uniform mis-scale the "a part can't exceed the whole" check can't catch. 1 Cr = 1e7, 1 L = 1e5.
+ */
+function inrScale(n: number): string {
+  const a = Math.abs(n);
+  if (a >= 1e7) return `${(n / 1e7).toFixed(2)} Cr`;
+  if (a >= 1e5) return `${(n / 1e5).toFixed(2)} L`;
+  return "";
+}
+
+/** A raw number followed by its exact Cr/L scale when large, e.g. "162904098 (16.29 Cr)". */
+function withScale(n: number): string {
+  const s = inrScale(n);
+  return s ? `${n} (${s})` : `${n}`;
+}
+
 /** Full typed schema block for the chosen tables. */
 export function schemaBlock(infos: TableInfo[]): string {
   return infos
@@ -149,7 +168,7 @@ function columnAggregates(rows: Record<string, unknown>[], rowCount: number): st
       if (num === null) { ok = false; break; } // non-numeric column - skip
       sum += num; seen++; if (num < min) min = num; if (num > max) max = num;
     }
-    if (ok && seen) parts.push(`${k}: sum=${sum}, min=${min}, max=${max}`);
+    if (ok && seen) parts.push(`${k}: sum=${withScale(sum)}, min=${withScale(min)}, max=${withScale(max)}`);
   }
   if (!parts.length) return "";
   // rowCount is the true count returned; r.rows is capped at 40. Flag partial sums clearly.
@@ -157,7 +176,7 @@ function columnAggregates(rows: Record<string, unknown>[], rowCount: number): st
   const scope = complete
     ? `all ${rowCount} returned rows`
     : `ONLY the first ${rows.length} of ${rowCount} rows (NOT a grand total)`;
-  return `\nColumn aggregates over ${scope} - use these, do NOT add rows yourself: ${parts.join("; ")}`;
+  return `\nColumn aggregates over ${scope} - use these EXACT values, including the Cr/L scale shown, verbatim; do NOT add rows or re-scale yourself: ${parts.join("; ")}`;
 }
 
 /** Results gathered so far, trimmed for the model's context (+ exact column aggregates). */
