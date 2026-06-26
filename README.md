@@ -416,14 +416,5 @@ scripts/
 ```
 
 ---
-
-## 9. Features & limits
-
-- **Conversational analysis** with live streamed reasoning steps and **follow-ups** that build on
-  context (*"now filter that to Mumbai"*).
-- **Structured dashboards**: hero metrics, ECharts charts each with a written insight, tables, and
-  recommendations. **Export SQL** exposes every query the agent ran.
-- **File upload** (CSV / Excel / JSON): Scout infers a ClickHouse schema, creates the table, loads
-  the rows, and the graph's auto-inference wires the new table into the join graph.
 - **Scope:** the agent caps itself at ~8 queries per analysis; the graph's edge-verification probes
   are sampled (400 keys) and cached, so they stay cheap on multi-million-row tables.
