@@ -1,10 +1,8 @@
-# Scout — AI Data Analytics Agent over ClickHouse
+# Scout - AI Data Analytics Agent over ClickHouse
 
-Scout turns a plain-English question into a structured analytical dashboard — hero metrics, charts,
-data tables, and a written narrative — by reasoning over a large ClickHouse warehouse the way an
-analyst would: map the schema, figure out which tables join and on what keys, write the SQL, run it,
-and explain the result. It is built around one hard problem and one technique that solves it:
-**joining a 32-table warehouse that has no foreign keys, using Graph RAG.**
+Scout turns a plain-English question into a structured analytical dashboard by reasoning over a large ClickHouse warehouse the way an analyst would:
+map the schema, figure out which tables join and on what keys, write the SQL, run it,
+and explain the result.
 
 ```
 User question
