@@ -112,7 +112,8 @@ export default function GraphCanvas({ nodes, edges }: { nodes: GNode[]; edges: G
           <div className="flex flex-wrap gap-x-4 gap-y-2.5 text-[12.5px] font-medium text-ink-soft md:flex-col">
             <span className="flex items-center gap-2.5"><span className="inline-block w-6 border-t-2" style={{ borderColor: "rgba(47,107,255,0.7)" }} />verified join</span>
             <span className="flex items-center gap-2.5"><span className="inline-block w-6 border-t-2 border-dashed" style={{ borderColor: "rgba(245,158,11,0.85)" }} />partial overlap</span>
-            <span className="flex items-center gap-2.5"><span className="inline-block w-6 border-t-2" style={{ borderColor: "rgba(139,92,246,0.85)" }} />declared</span>
+            <span className="flex items-center gap-2.5"><span className="inline-block w-6 border-t-2" style={{ borderColor: "rgba(139,92,246,0.85)" }} />declared (unverified)</span>
+            <span className="flex items-center gap-2.5"><span className="inline-block w-6 border-t-2 border-dashed" style={{ borderColor: "rgba(148,163,184,0.8)" }} />inferred</span>
           </div>
         </div>
 
