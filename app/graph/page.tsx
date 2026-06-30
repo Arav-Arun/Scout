@@ -38,6 +38,8 @@ export default function GraphLabPage() {
   const [data, setData] = useState<GraphData | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<"visualize" | "inspect" | "test" | "edges">("visualize");
+  // When editing from the Inspect tab, the edge to pre-fill the Add-relationship form with.
+  const [editTarget, setEditTarget] = useState<GEdge | null>(null);
 
   const load = useCallback(() => {
     fetch("/api/graph")
@@ -109,7 +111,7 @@ export default function GraphLabPage() {
                 ))}
               </div>
               <button
-                onClick={() => setTab("edges")}
+                onClick={() => { setEditTarget(null); setTab("edges"); }}
                 title="Declare a relationship that isn't a foreign key"
                 className={`mb-1.5 inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${
                   tab === "edges" ? "bg-brand text-white shadow-sm" : "bg-brand/10 text-brand hover:bg-brand/15"
@@ -122,9 +124,9 @@ export default function GraphLabPage() {
 
             <div className="mt-5">
               {tab === "visualize" && <GraphCanvas nodes={data.nodes} edges={data.edges} />}
-              {tab === "inspect" && <InspectTab data={data} />}
+              {tab === "inspect" && <InspectTab data={data} onChanged={load} onEdit={(e) => { setEditTarget(e); setTab("edges"); }} />}
               {tab === "test" && <TestTab data={data} />}
-              {tab === "edges" && <EdgesTab data={data} onChanged={load} />}
+              {tab === "edges" && <EdgesTab data={data} onChanged={load} editTarget={editTarget} />}
             </div>
           </>
         )}
@@ -150,7 +152,7 @@ function Stat({ label, value, tone }: { label: string; value: number; tone?: str
 }
 
 // ── Inspect ───────────────────────────────────────────────────────────────────
-function InspectTab({ data }: { data: GraphData }) {
+function InspectTab({ data, onEdit, onChanged }: { data: GraphData; onEdit: (e: GEdge) => void; onChanged: () => void }) {
   const [q, setQ] = useState("");
   const [src, setSrc] = useState<"all" | Source>("all");
   const [showDropped, setShowDropped] = useState(false);
@@ -165,6 +167,12 @@ function InspectTab({ data }: { data: GraphData }) {
         `${e.a}.${e.aCol} ${e.b}.${e.bCol} ${e.label}`.toLowerCase().includes(needle))
       .sort((x, y) => (y.overlap ?? -1) - (x.overlap ?? -1));
   }, [data, q, src, showDropped]);
+
+  // Delete a declared edge inline (inferred edges are automatic, so they have no actions).
+  const del = async (e: GEdge) => {
+    await fetch("/api/graph/edge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ a: e.a, aCol: e.aCol, b: e.b, bCol: e.bCol, remove: true }) });
+    onChanged();
+  };
 
   return (
     <div>
@@ -196,6 +204,7 @@ function InspectTab({ data }: { data: GraphData }) {
               <th className="px-3 py-2.5 font-semibold">Source</th>
               <th className="px-3 py-2.5 font-semibold text-right">Overlap</th>
               <th className="px-3 py-2.5 font-semibold">Verdict</th>
+              <th className="px-3 py-2.5 font-semibold text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -208,9 +217,18 @@ function InspectTab({ data }: { data: GraphData }) {
                 <td className="px-3 py-2"><span className={`rounded px-1.5 py-0.5 text-[10.5px] font-semibold ${SOURCE_STYLE[e.source]}`}>{e.source}</span></td>
                 <td className="px-3 py-2 text-right font-mono tabular-nums text-ink-soft">{pct(e.overlap)}</td>
                 <td className="px-3 py-2"><span className={`rounded px-1.5 py-0.5 text-[10.5px] font-semibold ${STATUS_STYLE[e.status].cls}`}>{STATUS_STYLE[e.status].label}</span></td>
+                <td className="px-3 py-2 text-right">
+                  {/* Only declared edges are editable; inferred edges are automatic. */}
+                  {e.source === "declared" && e.status !== "dropped" ? (
+                    <div className="flex justify-end gap-1">
+                      <button onClick={() => onEdit(e)} className="rounded-md px-2 py-1 text-[11px] font-semibold text-brand hover:bg-brand/10">Edit</button>
+                      <button onClick={() => del(e)} className="rounded-md px-2 py-1 text-[11px] font-semibold text-red-500 hover:bg-red-500/10">Delete</button>
+                    </div>
+                  ) : <span className="text-ink-faint">—</span>}
+                </td>
               </tr>
             ))}
-            {!rows.length && <tr><td colSpan={5} className="px-3 py-8 text-center text-ink-faint">No edges match.</td></tr>}
+            {!rows.length && <tr><td colSpan={6} className="px-3 py-8 text-center text-ink-faint">No edges match.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -326,7 +344,7 @@ function ColPicker({ label, table, col, tables, cols, onTable, onCol }: {
 }
 
 // ── Relationships (manage declared edges) ─────────────────────────────────────
-function EdgesTab({ data, onChanged }: { data: GraphData; onChanged: () => void }) {
+function EdgesTab({ data, onChanged, editTarget }: { data: GraphData; onChanged: () => void; editTarget?: GEdge | null }) {
   const tableNames = useMemo(() => data.nodes.map((n) => n.id).sort(), [data]);
   const colsOf = useCallback((t: string) => data.nodes.find((n) => n.id === t)?.columns ?? [], [data]);
   const declared = useMemo(
@@ -350,6 +368,9 @@ function EdgesTab({ data, onChanged }: { data: GraphData; onChanged: () => void 
     setEditing({ a: e.a, aCol: e.aCol, b: e.b, bCol: e.bCol });
     setA(e.a); setACol(e.aCol); setB(e.b); setBCol(e.bCol); setLabel(e.label || ""); setMsg(null);
   };
+
+  // Pre-fill the form when an edit was launched from the Inspect tab.
+  useEffect(() => { if (editTarget) beginEdit(editTarget); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [editTarget]);
 
   const submit = async () => {
     setBusy(true); setMsg(null);
