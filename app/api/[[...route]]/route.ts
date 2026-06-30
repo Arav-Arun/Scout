@@ -199,6 +199,12 @@ export async function POST(
         if (remove) {
           await removeUserEdge(edge);
           invalidateSchemaGraph();
+          // Re-snapshot so the persisted graph reflects the deletion too. Best-effort.
+          try {
+            await persistSchemaGraph(await getSchemaGraph());
+          } catch {
+            /* snapshot refresh failed; the in-memory graph already reflects the deletion */
+          }
           return Response.json({ ok: true });
         }
 
