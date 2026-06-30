@@ -4,6 +4,7 @@ import { ingestFile } from "@/lib/db/ingest";
 import { invalidateCatalog } from "@/lib/db/catalog";
 import { dbName } from "@/lib/db/clickhouse";
 import { getSchemaGraph } from "@/lib/graph/schema-graph";
+import { persistSchemaGraph } from "@/lib/graph/persist";
 import { tableDomain } from "@/lib/graph/relationships";
 import type { ChatTurn, ScoutEvent } from "@/lib/types";
 
@@ -114,6 +115,14 @@ export async function POST(
 
       // The warehouse changed - drop the cached catalog so the next question sees it.
       invalidateCatalog();
+
+      // Re-snapshot the schema graph so scout_schema_graph_edges/nodes reflect the new table.
+      // Best-effort: a write failure here must not fail the upload itself.
+      try {
+        await persistSchemaGraph(await getSchemaGraph());
+      } catch {
+        // snapshot refresh failed; the in-memory graph is still correct for the next question.
+      }
 
       return Response.json({
         table: result.table,

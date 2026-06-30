@@ -9,7 +9,8 @@
 // truth for the "verified" side of its comparison.
 //
 // Writes go over the shared HTTP write transport (lib/db/write.ts), not the
-// read-only analytics client. Trigger: `npm run graph:persist`.
+// read-only analytics client. Triggered on every file upload (app/api route) so the
+// snapshot tracks new data, and on demand via `npm run graph:persist`.
 //
 // Each run appends a snapshot tagged by `built_at`; the latest snapshot is
 // `WHERE built_at = (SELECT max(built_at) FROM …)`. We persist the FULL probed
