@@ -1,22 +1,9 @@
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// Scout's brain, as a thin orchestrator. Turns one natural-language question into a
-// structured dashboard by running an explicit 6-phase pipeline in order:
+// Workflow (lib/agent/workflow.ts) — thin orchestrator: turns one natural-language question
+// into a dashboard via the 6-phase pipeline, in order:
 //   DISCOVER → PLAN → RELATE → INSPECT → ANALYZE↻ → SYNTHESIZE
-//
-// RELATE is the Graph RAG step: it walks the schema graph (lib/graph/) from the
-// planner's seed tables to retrieve the connected subgraph + the exact join keys, so
-// the analyst can join across the warehouse, which has no foreign keys.
-//
-// Each phase is its own function in lib/agent/phases.ts; the formatters/helpers they
-// share live in lib/agent/context.ts. This file is just the sequence and the
-// early-exit decisions between phases.
-//
-// ▸ CALL MAP:
-//   - CALLED BY: app/api/[[...route]]/route.ts (chat handler) -> runScoutWorkflow(history, emit, opts)
-//   - CALLS:     lib/agent/phases.ts (discover, planAnalysis, relate, inspect, analyze, synthesize)
-//   - EMITS:     ScoutEvent objects (lib/types.ts) streamed to the UI.
-// ─────────────────────────────────────────────────────────────────────────────
+// RELATE is the Graph RAG step (walks lib/graph/ to recover join keys; the warehouse has no
+// foreign keys). Called by app/api/[[...route]]/route.ts; the phases live in phases.ts and
+// emits ScoutEvent objects (lib/types.ts) streamed to the UI.
 
 import type { ChatTurn, AgentResult } from "../types";
 import { lastUser, type Emit } from "./context";
@@ -61,8 +48,7 @@ export async function runScoutWorkflow(
   const { results, queries } = await analyze(plan, schemas, sub, cat, model, emit);
 
   // 6 · SYNTHESIZE ─ compose the dashboard (emits it; may be null on failure).
-  //     `cat` carries the exact warehouse facts (table count, total rows) so the
-  //     synthesizer never has to guess structural numbers (cf. the "0 tables" bug).
+  //     `cat` carries the exact warehouse facts so the synthesizer never guesses structural numbers.
   const dashboard = await synthesize(plan, results, queries, cat, model, emit);
   return { dashboard, queries, clarified: false };
 }

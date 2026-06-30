@@ -1,22 +1,11 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// SCHEMA-GRAPH PERSISTENCE  ·  lib/graph/persist.ts
+// persist.ts — writes a durable, queryable snapshot of the recovered + verified schema
+// graph into the warehouse (ClickHouse scout_schema_graph_edges / _nodes), so the graph is
+// an inspectable artifact rather than only an in-memory structure.
 //
-// The recovered + verified schema graph normally lives only in a module-level
-// variable (schema-graph.ts), rebuilt on restart. This module writes a durable,
-// queryable snapshot of it into the warehouse itself (ClickHouse `scout_final`),
-// so the graph is an inspectable artifact — `SELECT * FROM scout_schema_graph_edges`
-// — and the standalone Graph RAG demo (graph_rag_demo/) reads it as the source of
-// truth for the "verified" side of its comparison.
-//
-// Writes go over the shared HTTP write transport (lib/db/write.ts), not the
-// read-only analytics client. Triggered on every file upload (app/api route) so the
-// snapshot tracks new data, and on demand via `npm run graph:persist`.
-//
-// Each run appends a snapshot tagged by `built_at`; the latest snapshot is
-// `WHERE built_at = (SELECT max(built_at) FROM …)`. We persist the FULL probed
-// candidate set — including the phantom edges VERIFY dropped (status='dropped') —
-// so the demo can show "name-match proposed this, Graph RAG dropped it at 0%".
-// ─────────────────────────────────────────────────────────────────────────────
+// Writes use the HTTP write transport (lib/db/write.ts), not the read-only analytics client.
+// Triggered on every file upload (app/api route) and on demand via `npm run graph:persist`.
+// Each run appends a snapshot tagged by built_at (latest = max(built_at)). The full probed
+// candidate set is persisted, including phantom edges VERIFY dropped (status = 'dropped').
 
 import { dbName } from "../db/clickhouse";
 import { chExec } from "../db/write";

@@ -1,14 +1,7 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// CLICKHOUSE INGESTION  ·  lib/db/ingest.ts
-//
-// A write path in Scout: the analytics agent is read-only (lib/db/clickhouse.ts),
-// but ingesting an uploaded file needs CREATE TABLE + INSERT. The read-only client
-// can't do that, so the write/DDL statements go directly over ClickHouse's HTTP
-// interface via chExec() (shared transport in lib/db/write.ts).
-//
-// File parsing lives in lib/db/parsers.ts; this module handles only the
-// ClickHouse-specific ingestion: table naming, dedup, DDL, and bulk insert.
-// ─────────────────────────────────────────────────────────────────────────────
+// ClickHouse ingestion for uploaded files. The analytics client is read-only, so the
+// CREATE TABLE + INSERT here go directly over ClickHouse's HTTP interface via chExec()
+// (write.ts). File parsing lives in parsers.ts; this module handles the ClickHouse-specific
+// parts: table naming, dedup, DDL, and bulk insert.
 
 import { createHash } from "node:crypto";
 import { runSelect, describeTable } from "./clickhouse";
@@ -17,7 +10,7 @@ import { parseDelimited, parseJson, parseXlsx, inferSchema, type InferredColumn 
 
 export type { InferredColumn };
 
-// ── Shared helpers ───────────────────────────────────────────────────────────
+// Shared helpers
 
 /** Derive a deterministic, safe table name from filename + content hash. */
 function deriveTableName(filename: string, hash: string): string {
@@ -66,7 +59,7 @@ async function createTable(table: string, columns: InferredColumn[]): Promise<vo
   await chExec(`CREATE TABLE \`${table}\` (\n  ${colDefs}\n) ENGINE = MergeTree ORDER BY ${orderByKey(columns)}`);
 }
 
-// ── Public API ───────────────────────────────────────────────────────────────
+// Public API
 
 export interface IngestResult {
   table: string;
@@ -137,7 +130,7 @@ async function ingestDelimited(
     input_format_null_as_default: "1",
   });
 
-  // Fetch total row count dynamically
+  // Total row count after the load.
   const countRes = await runSelect(`SELECT count() AS n FROM \`${table}\``);
   const rowCount = Number(countRes.rows[0]?.n ?? dataSample.length);
 

@@ -1,22 +1,9 @@
 import { createClient, type ClickHouseClient } from "@clickhouse/client";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DATA ACCESS LAYER  ·  lib/db/clickhouse.ts
-//
-// Read-only by policy: the agent may only run SELECT / DESCRIBE / SHOW. We enforce
-// this in `assertReadOnly` before every query so that a misbehaving prompt can
-// never mutate the warehouse.
-//
-// ▸ CALL MAP (who calls what):
-//   - lib/agent/phases.ts (the AGENT) imports describeTable/runSelect from here.
-//   - lib/db/catalog.ts builds the cached warehouse map on top of runSelect.
-//   - lib/db/ingest.ts (the WRITE path) imports runSelect/describeTable to dedupe uploads.
-//   - app/api/[[...route]]/route.ts (db-info handler) reads only env (host/db) for the UI banner.
-//
-// The single ClickHouse client (getClient) is connect-once / reuse-forever: we do NOT
-// reconnect on every question. The schema cache lives in lib/db/catalog.ts; the write
-// transport (CREATE/INSERT) lives in lib/db/ingest.ts (chExec).
-// ─────────────────────────────────────────────────────────────────────────────
+// Read-only data access layer. The agent may only run SELECT / DESCRIBE / SHOW;
+// assertReadOnly enforces this before every query so a misbehaving prompt can never
+// mutate the warehouse. The single client is created once and reused. The schema cache
+// lives in catalog.ts; the write transport (CREATE/INSERT) lives in write.ts (chExec).
 
 let _client: ClickHouseClient | null = null;
 

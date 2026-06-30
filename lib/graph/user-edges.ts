@@ -1,17 +1,11 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// USER-DEFINED EDGES  ·  lib/graph/user-edges.ts
+// user-edges.ts — user-declared join edges. Not every real relationship is a foreign key:
+// two columns can be joinable without a key-like name or being caught by inference. Users
+// declare these from the Graph Lab; they persist in ClickHouse and merge back into the
+// graph (buildSchemaGraph, source = "user").
 //
-// The schema graph is recovered automatically (curated manifest + key-column
-// inference in relationships.ts). But not every real relationship is a foreign key:
-// two columns can be genuinely joinable without sharing a key-like name or being
-// caught by inference. This module lets a user declare those edges by hand from the
-// Graph Lab page, and persists them in ClickHouse so they survive restarts and feed
-// straight back into the graph (merged in buildSchemaGraph, source = "user").
-//
-// Storage is a ReplacingMergeTree keyed by the edge's four endpoints: adding re-inserts
-// with active=1, removing re-inserts a tombstone (active=0); the latest `updated_at`
-// wins, so reads use FINAL + WHERE active = 1.
-// ─────────────────────────────────────────────────────────────────────────────
+// Storage is a ReplacingMergeTree keyed by the edge's four endpoints: add re-inserts with
+// active=1, remove writes a tombstone (active=0); the latest updated_at wins, so reads use
+// FINAL WHERE active = 1.
 
 import { dbName, runSelect } from "../db/clickhouse";
 import { chExec } from "../db/write";

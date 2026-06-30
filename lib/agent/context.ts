@@ -1,13 +1,7 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// AGENT CONTEXT  ·  lib/agent/context.ts
-//
-// The plumbing the agent shares across phases: the data shapes it passes around
-// (Plan, AnalyzeResult), small id/error helpers, and the formatters that turn
-// catalog / schema / results into the prompt text the LLM reads.
-//
-// This is the "lower layer": it knows nothing about the phases (lib/agent/phases.ts)
-// or the orchestrator (lib/agent/workflow.ts) - they import from here, never the reverse.
-// ─────────────────────────────────────────────────────────────────────────────
+// Agent context (lib/agent/context.ts) — shared data shapes (Plan, AnalyzeResult),
+// small id/error helpers, and the formatters that turn catalog/schema/results into the
+// prompt text the LLM reads. Lower layer: imported by phases.ts and workflow.ts, never
+// the reverse.
 
 import type { TableInfo } from "../db/clickhouse";
 import type { ChatTurn, ScoutEvent } from "../types";
@@ -62,10 +56,8 @@ export function historyText(history: ChatTurn[]): string {
 }
 
 // ── Warehouse-level facts (deterministic, computed from the catalog) ──────────
-// The ground truth for structural questions ("how many tables / rows?"). We compute
-// these in code and hand them to the model as one WAREHOUSE line, so it never has to
-// count tables itself (cf. the "0 tables" bug, where the synthesizer guessed structural
-// numbers because it was never given them).
+// Ground truth for structural questions ("how many tables / rows?"): computed in code and
+// handed to the model as one WAREHOUSE line so it never counts tables itself.
 
 interface WarehouseSummary {
   tableCount: number;
@@ -111,12 +103,11 @@ export function compactCatalog(tables: TableInfo[], rowCounts: Record<string, nu
       return `- ${t.name} [${t.columns.length} cols${scale}]: ${cols}${more}`;
     })
     .join("\n");
-  // Header line states the exact table count up front: it is the source of truth for
-  // structural facts, so the model reads it instead of guessing (cf. the "0 tables" bug).
+  // Header line states the exact table count up front, so the model reads it rather than guessing.
   return `${warehouseFacts(tables, rowCounts)}\n${lines}`;
 }
 
-/** Human-readable row count (1_00_00_000 -> "10.0M") for catalog context. */
+/** Human-readable row count (10_000_000 -> "10.0M") for catalog context. */
 function fmtCount(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
@@ -124,10 +115,9 @@ function fmtCount(n: number): string {
 }
 
 /**
- * Exact Indian-unit (crore/lakh) rendering of a magnitude. We compute this in code and
- * hand it to the model so it copies the right figure instead of doing R/1e7 in its head -
- * the hand conversion is how a hero metric ended up 10x too large (₹162.90Cr for ₹16.29Cr),
- * a uniform mis-scale the "a part can't exceed the whole" check can't catch. 1 Cr = 1e7, 1 L = 1e5.
+ * Exact crore/lakh rendering of a magnitude (1 Cr = 1e7, 1 L = 1e5), computed in code so the
+ * model copies the right figure instead of re-scaling in its head — a hand R/1e7 conversion is
+ * how a hero metric ended up 10x too large.
  */
 function inrScale(n: number): string {
   const a = Math.abs(n);
@@ -151,8 +141,7 @@ export function schemaBlock(infos: TableInfo[]): string {
 
 /**
  * Per-numeric-column sum/min/max over a result's rows, computed in code so the model never
- * has to add up rows itself. For a complete breakdown the column `sum` IS the grand total and `max` is the
- * largest part - both exact and mutually consistent.
+ * adds up rows itself. For a complete breakdown, `sum` is the grand total and `max` the largest part.
  */
 function columnAggregates(rows: Record<string, unknown>[], rowCount: number): string {
   if (!rows.length) return "";

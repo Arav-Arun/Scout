@@ -1,19 +1,13 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// FILE PARSERS  ·  lib/db/parsers.ts
-//
-// Pure parsing utilities for CSV, TSV, JSON, and Excel files. These are
-// ClickHouse-agnostic and can be reused anywhere file data needs to be turned
-// into a header + rows matrix.
-// ─────────────────────────────────────────────────────────────────────────────
+// File parsers — ClickHouse-agnostic utilities that turn CSV, TSV, JSON, and Excel
+// files into a header + rows matrix, plus per-column ClickHouse type inference.
 
 import * as XLSX from "xlsx";
 
-// ── Delimiter-based parsing ──────────────────────────────────────────────────
+// Delimiter-based parsing
 
 /**
- * A minimal RFC-4180-ish delimiter parser.
- * Handles double-quoted fields, escaped quotes (""), field delimiters, and CRLF
- * line breaks using a single-pass character scanning state machine.
+ * A minimal RFC-4180-ish delimiter parser. Handles double-quoted fields, escaped
+ * quotes (""), field delimiters, and CRLF line breaks in a single-pass state machine.
  */
 export function parseDelimited(text: string, delimiter: string = ",", maxRows?: number): string[][] {
   const rows: string[][] = [];
@@ -59,12 +53,11 @@ export function parseDelimited(text: string, delimiter: string = ",", maxRows?: 
   return rows.filter((r) => r.length > 1 || (r.length === 1 && r[0].trim() !== ""));
 }
 
-// ── JSON parsing ─────────────────────────────────────────────────────────────
+// JSON parsing
 
 /**
- * Parse JSON inputs. Supports both standard JSON arrays of objects and
- * Line-Delimited JSON (LDJSON/NDJSON) where each line represents a single object.
- * Returns a matrix representing the headers and rows.
+ * Parse JSON input, accepting both a standard array of objects and newline-delimited
+ * JSON (NDJSON). Returns a header + rows matrix.
  */
 export function parseJson(buf: Buffer): string[][] {
   const text = buf.toString("utf8").trim();
@@ -121,7 +114,7 @@ export function parseJson(buf: Buffer): string[][] {
   return rows;
 }
 
-// ── Excel parsing ────────────────────────────────────────────────────────────
+// Excel parsing
 
 /** Parse the first sheet of an .xlsx/.xls workbook into a string matrix. */
 export function parseXlsx(buf: Buffer): string[][] {
@@ -132,7 +125,7 @@ export function parseXlsx(buf: Buffer): string[][] {
   return aoa.map((r) => r.map((c) => (c == null ? "" : String(c))));
 }
 
-// ── Schema inference ─────────────────────────────────────────────────────────
+// Schema inference
 
 export interface InferredColumn {
   /** Sanitised ClickHouse-safe column name. */

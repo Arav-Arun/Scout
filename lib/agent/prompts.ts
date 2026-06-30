@@ -1,9 +1,5 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// SYSTEM PROMPTS  ·  lib/agent/prompts.ts
-//
-// All LLM system prompts live here, separated from orchestration logic so they
-// can be iterated on independently.
-// ─────────────────────────────────────────────────────────────────────────────
+// System prompts (lib/agent/prompts.ts) — all LLM system prompts, kept separate from
+// orchestration so they can be iterated independently.
 
 const SCOUT_SYSTEM_PROMPT = `You are **Scout** - an AI Data Analytics Agent for a serious enterprise analyst (market, retail, product, and banking-portfolio analysis).
 

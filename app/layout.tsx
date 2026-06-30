@@ -2,8 +2,7 @@ import type { Metadata } from "next";
 import { Hanken_Grotesk } from "next/font/google";
 import "./globals.css";
 
-// Hanken Grotesk: a refined, slightly characterful grotesque with excellent
-// tabular figures - more considered than the default Inter, still enterprise-clean.
+// Hanken Grotesk — grotesque sans with strong tabular figures.
 const sans = Hanken_Grotesk({
   subsets: ["latin"],
   variable: "--font-hanken",

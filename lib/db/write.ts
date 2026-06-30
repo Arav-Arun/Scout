@@ -1,11 +1,6 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// CLICKHOUSE WRITE TRANSPORT  ·  lib/db/write.ts
-//
-// The analytics client (lib/db/clickhouse.ts) is pinned read-only (readonly=2), so
-// it can't run CREATE/INSERT. The two write paths in Scout — file ingestion
-// (lib/db/ingest.ts) and schema-graph persistence (lib/graph/persist.ts) — both go
-// directly over ClickHouse's HTTP interface via chExec() below.
-// ─────────────────────────────────────────────────────────────────────────────
+// ClickHouse write transport. The analytics client is pinned read-only (readonly=2), so
+// the write paths — file ingestion (ingest.ts) and schema-graph persistence (persist.ts) —
+// go directly over ClickHouse's HTTP interface via chExec() below.
 
 /** Base URL + Basic-auth header for direct HTTP writes (same creds as the read client). */
 function chBase(): { url: string; auth: string } {

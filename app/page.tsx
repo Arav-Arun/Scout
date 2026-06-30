@@ -1,15 +1,8 @@
 "use client";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// UI ENTRY  ·  app/page.tsx
-//
-// Pure layout shell. All agent interaction state lives in hooks/useScoutAgent.ts.
-// This component only handles:
-//   - Desktop vs mobile layout switching
-//   - Theme toggle + persistence (restored on load; see the pre-paint script in app/layout.tsx)
-//   - Sidebar resize (width persisted to localStorage)
-//   - Rendering ChatPanel + DashboardPanel
-// ─────────────────────────────────────────────────────────────────────────────
+// Home (app/page.tsx) — layout shell only; agent state lives in hooks/useScoutAgent.ts.
+// Handles desktop/mobile layout switching, theme toggle + persistence (see the pre-paint
+// script in app/layout.tsx), sidebar resize, and rendering ChatPanel + DashboardPanel.
 
 import { useCallback, useEffect, useRef, useState, memo } from "react";
 import ChatPanel from "@/components/ChatPanel";
@@ -32,7 +25,7 @@ export default function Home() {
   const [mobileDashboardBadge, setMobileDashboardBadge] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_W);
 
-  // ── Restore the persisted theme + sidebar width ────────────────────────────
+  // Restore the persisted theme + sidebar width.
   useEffect(() => {
     const savedTheme = localStorage.getItem("scout-theme");
     if (savedTheme === "dark" || savedTheme === "light") setTheme(savedTheme);
@@ -48,7 +41,7 @@ export default function Home() {
 
   const toggleTheme = useCallback(() => setTheme((t) => (t === "dark" ? "light" : "dark")), []);
 
-  // ── Track new dashboards for mobile badge ──────────────────────────────────
+  // Track new dashboards to show the mobile badge.
   const prevVersionCount = useRef(0);
   useEffect(() => {
     if (agent.versions.length > prevVersionCount.current) {
@@ -57,7 +50,7 @@ export default function Home() {
     prevVersionCount.current = agent.versions.length;
   }, [agent.versions.length]);
 
-  // ── Resize handle ──────────────────────────────────────────────────────────
+  // Sidebar resize handle.
   const sidebarRef = useRef<HTMLDivElement>(null);
 
   const onResizeStart = useCallback(
@@ -106,7 +99,7 @@ export default function Home() {
 
   return (
     <main className="relative flex h-[100dvh] w-screen overflow-hidden md:p-3.5 md:gap-3.5">
-      {/* ── Desktop layout (md+): resizable side-by-side ── */}
+      {/* Desktop layout (md+): resizable side-by-side */}
       <section
         ref={sidebarRef}
         style={{ "--sidebar-w": chatCollapsed ? "0px" : `${sidebarWidth}px` } as React.CSSProperties}
@@ -149,7 +142,7 @@ export default function Home() {
         />
       </section>
 
-      {/* ── Mobile layout (<md): full-screen tab view ── */}
+      {/* Mobile layout (<md): full-screen tab view */}
       <div className="flex md:hidden h-full w-full flex-col">
         <div className="flex-1 overflow-hidden">
           {mobileTab === "chat" ? (
@@ -190,7 +183,7 @@ export default function Home() {
   );
 }
 
-/* ── Memoised mobile tab bar ────────────────────────────────────────────────── */
+// Memoised mobile tab bar.
 const MobileTabBar = memo(function MobileTabBar({
   active,
   onSwitch,

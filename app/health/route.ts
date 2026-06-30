@@ -1,4 +1,4 @@
-// GET /health — liveness probe for Railway et al.
+// GET /health — liveness probe.
 export const dynamic = "force-dynamic";
 
 export function GET(): Response {

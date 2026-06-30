@@ -1,14 +1,8 @@
 "use client";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// UI · DASHBOARD PANEL (right pane)  ·  components/DashboardPanel.tsx
-//
-// Renders the agent's final answer: title, hero metrics, ECharts charts (each
-// with its written insight), tables, recommendations, and "Export SQL"/"Share".
-//   - MOUNTED BY: app/page.tsx
-//   - DATA IN:    DashboardVersion[] (built in page.tsx from "dashboard" events)
-//   - DELEGATES:  chart rendering to components/EChart.tsx
-// ─────────────────────────────────────────────────────────────────────────────
+// DashboardPanel (right pane) — renders the agent's final answer: title, hero metrics,
+// charts (each with its written insight), tables, recommendations, and Export SQL / Share.
+// Mounted by app/page.tsx from DashboardVersion[]; delegates chart rendering to EChart.tsx.
 
 import { useState } from "react";
 import type { Dashboard, ExecutedQuery, ChartSpec, DataTableSpec } from "@/lib/types";
@@ -69,7 +63,7 @@ export default function DashboardPanel({
 
   return (
     <div className="glass flex h-full flex-col md:rounded-3xl md:shadow-lg overflow-hidden relative">
-      {/* Floating HUD Controls */}
+      {/* floating controls */}
       {collapsed && onExpand && (
         <button
           onClick={onExpand}
@@ -362,7 +356,7 @@ function DashboardEmpty({
 }) {
   return (
     <div className="relative flex h-full flex-col items-center justify-center px-10 text-center">
-      {/* Logo with a soft neutral halo behind it */}
+      {/* logo with a soft halo */}
       <div className="relative flex items-center justify-center">
         <div
           aria-hidden

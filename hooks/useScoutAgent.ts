@@ -1,13 +1,6 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// AGENT HOOK  ·  hooks/useScoutAgent.ts
-//
-// Owns all the client-side agent interaction state: conversation turns, dashboard
-// versions, streaming, and file upload. Extracted from page.tsx so the page
-// component is a pure layout shell.
-//
-// ▸ Consumes:  POST /api/chat, POST /api/upload
-// ▸ Protocol:  NDJSON stream of ScoutEvent (lib/types.ts)
-// ─────────────────────────────────────────────────────────────────────────────
+// useScoutAgent — owns the client-side agent state: conversation turns, dashboard
+// versions, streaming, and file upload. Consumes POST /api/chat and POST /api/upload,
+// reading an NDJSON stream of ScoutEvent (lib/types.ts).
 
 "use client";
 
@@ -40,8 +33,7 @@ export function useScoutAgent(): ScoutAgent {
     historyRef.current = [];
   }, []);
 
-  // ── Patch the last assistant turn's blocks ─────────────────────────────────
-
+  // Patch the last assistant turn's blocks in place.
   const patchAssistant = useCallback(
     (fn: (blocks: AgentBlock[]) => AgentBlock[], versionIndex?: number) => {
       setTurns((t) => {
@@ -59,8 +51,7 @@ export function useScoutAgent(): ScoutAgent {
     [],
   );
 
-  // ── Send a question ────────────────────────────────────────────────────────
-
+  // Send a question and stream the agent's response into the active turn.
   const send = useCallback(
     async (text: string) => {
       if (isRunning) return;
@@ -181,8 +172,7 @@ export function useScoutAgent(): ScoutAgent {
     [isRunning, patchAssistant],
   );
 
-  // ── File upload ────────────────────────────────────────────────────────────
-
+  // Upload a file, then auto-ask the agent to profile the new table.
   const uploadFile = useCallback(
     async (file: File) => {
       if (isRunning) return;

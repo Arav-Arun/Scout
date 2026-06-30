@@ -1,3 +1,7 @@
+// route.ts — the app's API surface (catch-all). GET: db-info, graph (the recovered graph
+// for the viewer). POST: chat (streamed agent run), upload (ingest a file), and the Graph
+// Lab actions graph/probe, graph/retrieve, graph/edge.
+
 import { NextRequest } from "next/server";
 import { runScoutWorkflow } from "@/lib/agent/workflow";
 import { ingestFile } from "@/lib/db/ingest";
@@ -164,8 +168,8 @@ export async function POST(
         if (!a || !aCol || !b || !bCol) {
           return Response.json({ error: "a, aCol, b, bCol are required" }, { status: 400 });
         }
-        const overlap = await measureOverlap(a, aCol, b, bCol);
-        return Response.json({ overlap }); // 0..1, or null if not measurable
+        const measure = await measureOverlap(a, aCol, b, bCol);
+        return Response.json({ measure }); // {overlap, sampled, matched} or null if not measurable
       }
 
       // Test retrieval: what subgraph + JOIN GRAPH prompt the agent would build from these seeds.
@@ -210,14 +214,14 @@ export async function POST(
 
         await addUserEdge({ ...edge, label: typeof label === "string" ? label : undefined });
         invalidateSchemaGraph();
-        const overlap = await measureOverlap(edge.a, edge.aCol, edge.b, edge.bCol); // immediate feedback
+        const measure = await measureOverlap(edge.a, edge.aCol, edge.b, edge.bCol); // immediate feedback
         // Re-snapshot so the persisted graph reflects the new edge. Best-effort.
         try {
           await persistSchemaGraph(await getSchemaGraph());
         } catch {
           /* snapshot refresh failed; the in-memory graph already has the edge */
         }
-        return Response.json({ ok: true, overlap });
+        return Response.json({ ok: true, measure });
       }
 
       return new Response("Not Found", { status: 404 });

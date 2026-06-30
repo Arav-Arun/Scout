@@ -1,16 +1,7 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// AGENT PHASES  ·  lib/agent/phases.ts
-//
-// The six phases of the pipeline, one function each.
-// Every phase takes the context it needs plus `emit`, streams its own step chips, and returns its output.
-// The orchestrator (lib/agent/workflow.ts) just calls them in order.
-//
-//   discover → planAnalysis → relate → inspect → analyze → synthesize
-//                             └─ RELATE = Graph RAG retrieval (lib/graph/)
-//
-// Formatting/helpers live in ./context; the data layer in ../db/clickhouse; the
-// graph in ../graph; the LLM client in ./llm; the prompts in ./prompts.
-// ─────────────────────────────────────────────────────────────────────────────
+// Agent phases (lib/agent/phases.ts) — the six pipeline phases, one function each:
+// discover → planAnalysis → relate → inspect → analyze → synthesize (RELATE is the Graph
+// RAG retrieval step over lib/graph/). Each phase takes its context plus `emit`, streams its
+// own step chips, and returns its output; workflow.ts calls them in order.
 
 import { describeTable, runSelect, type TableInfo } from "../db/clickhouse";
 import { getCatalog, type Catalog } from "../db/catalog";

@@ -1,17 +1,6 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// WAREHOUSE CATALOG  ·  lib/db/catalog.ts
-//
-// Connect-once, cache-in-memory map of the warehouse: every table's columns plus a
-// free row-count estimate.
-//
-// ▸ CALL MAP:
-//   - lib/agent/phases.ts (DISCOVER) calls getCatalog() once per analysis.
-//   - app/api/[[...route]]/route.ts (upload handler) calls invalidateCatalog() after an upload so a
-//     freshly uploaded table shows up immediately.
-//
-// The cache refreshes lazily after CATALOG_TTL_MS. Stateless data access (the client,
-// runSelect, describeTable) lives in lib/db/clickhouse.ts.
-// ─────────────────────────────────────────────────────────────────────────────
+// Warehouse catalog — an in-memory map of every table's columns plus a free
+// row-count estimate, discovered once and refreshed lazily after CATALOG_TTL_MS.
+// Stateless data access (client, runSelect, describeTable) lives in clickhouse.ts.
 
 import { runSelect, dbName, type TableInfo } from "./clickhouse";
 
@@ -80,8 +69,8 @@ async function discoverCatalog(): Promise<Catalog> {
   const tables = await listTables();
   const rowCounts: Record<string, number> = {};
   try {
-    // system.tables.total_rows is metadata for MergeTree tables - no data scan, so
-    // this stays instant even when tables hold crores of rows.
+    // system.tables.total_rows is MergeTree metadata, not a data scan, so this stays
+    // instant on very large tables.
     const db = dbName();
     const res = await runSelect(
       `SELECT name, total_rows FROM system.tables WHERE database = '${db}'`,

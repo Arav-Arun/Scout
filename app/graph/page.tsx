@@ -1,20 +1,13 @@
 "use client";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GRAPH RAG LAB  ·  app/graph/page.tsx
-//
-// A regular in-app page for inspecting and testing the Graph RAG layer directly,
-// outside an agent run. Three surfaces:
-//   • Inspect  — every recovered edge with its source, live value-overlap and verdict
-//                (verified / partial / dropped phantom), plus the dropped phantoms.
-//   • Test     — pick seed tables and see the exact subgraph + "JOIN GRAPH" prompt the
-//                agent's RELATE phase would build; or probe any two columns for overlap.
-//   • Edges    — declare a relationship that ISN'T a foreign key (two related columns the
-//                automatic inference misses). It is verified, persisted, and merged back
-//                into the graph immediately.
-// ─────────────────────────────────────────────────────────────────────────────
+// Graph RAG Lab (app/graph/page.tsx) — in-app page to inspect and test the schema
+// knowledge graph the agent uses. Tabs: Visualize (the graph), Inspect (every recovered
+// edge + live overlap + verdict), Test (subgraph retrieval + join probe), and Add
+// relationship (declare a non-FK edge between two related columns; verified and merged in).
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import GraphCanvas from "@/components/GraphCanvas";
+import { ArrowLeftIcon, SparkIcon } from "@/components/icons";
 
 type Source = "curated" | "inferred" | "user";
 type Status = "verified" | "partial" | "dropped" | "unjudged";
@@ -25,6 +18,8 @@ interface GEdge {
   source: Source; overlap?: number; verified?: boolean; status: Status;
 }
 interface GraphData { nodes: GNode[]; edges: GEdge[]; dropped: GEdge[] }
+/** The auditable overlap probe: `matched` of `sampled` distinct child keys resolve to the parent. */
+interface Measure { overlap: number; sampled: number; matched: number }
 
 const STATUS_STYLE: Record<Status, { label: string; cls: string }> = {
   verified: { label: "verified", cls: "bg-emerald-500/12 text-emerald-600 dark:text-emerald-400" },
@@ -43,7 +38,7 @@ const pct = (o?: number) => (o === undefined || o === null ? "—" : `${Math.rou
 export default function GraphLabPage() {
   const [data, setData] = useState<GraphData | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [tab, setTab] = useState<"inspect" | "test" | "edges">("inspect");
+  const [tab, setTab] = useState<"visualize" | "inspect" | "test" | "edges">("visualize");
 
   const load = useCallback(() => {
     fetch("/api/graph")
@@ -71,8 +66,9 @@ export default function GraphLabPage() {
       <div className="mx-auto max-w-6xl px-5 py-6 md:px-8 md:py-8">
         {/* header */}
         <div className="flex items-center gap-4">
-          <a href="/" className="rounded-xl px-2.5 py-1.5 text-[13px] font-semibold text-ink-soft transition-colors hover:bg-black/5 hover:text-ink dark:hover:bg-white/10">
-            ← Back to Scout
+          <a href="/" className="group flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-[13px] font-semibold text-ink-soft transition-colors hover:bg-black/5 hover:text-ink dark:hover:bg-white/10">
+            <ArrowLeftIcon className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" />
+            Back to Scout
           </a>
           <div className="h-5 w-px bg-line" />
           <div>
@@ -98,22 +94,35 @@ export default function GraphLabPage() {
               <Stat label="User-added" value={stats.user} tone="violet" />
             </div>
 
-            {/* tabs */}
-            <div className="mt-7 flex gap-1 border-b border-line">
-              {(["inspect", "test", "edges"] as const).map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setTab(t)}
-                  className={`-mb-px border-b-2 px-4 py-2.5 text-[13.5px] font-semibold capitalize transition-colors ${
-                    tab === t ? "border-brand text-brand" : "border-transparent text-ink-faint hover:text-ink-soft"
-                  }`}
-                >
-                  {t === "edges" ? "Add edge" : t}
-                </button>
-              ))}
+            {/* tabs — Visualize / Inspect / Test, with a prominent Add-relationship CTA */}
+            <div className="mt-7 flex items-center justify-between gap-3 border-b border-line">
+              <div className="flex gap-1">
+                {(["visualize", "inspect", "test"] as const).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setTab(t)}
+                    className={`-mb-px border-b-2 px-4 py-2.5 text-[13.5px] font-semibold capitalize transition-colors ${
+                      tab === t ? "border-brand text-brand" : "border-transparent text-ink-faint hover:text-ink-soft"
+                    }`}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => setTab("edges")}
+                title="Declare a relationship that isn't a foreign key"
+                className={`mb-1.5 inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${
+                  tab === "edges" ? "bg-brand text-white shadow-sm" : "bg-brand/10 text-brand hover:bg-brand/15"
+                }`}
+              >
+                <SparkIcon className="h-3.5 w-3.5" />
+                Add relationship
+              </button>
             </div>
 
             <div className="mt-5">
+              {tab === "visualize" && <GraphCanvas nodes={data.nodes} edges={data.edges} />}
               {tab === "inspect" && <InspectTab data={data} />}
               {tab === "test" && <TestTab data={data} />}
               {tab === "edges" && <EdgesTab data={data} onChanged={load} />}
@@ -237,11 +246,11 @@ function TestTab({ data }: { data: GraphData }) {
   const [pac, setPac] = useState("");
   const [pb, setPb] = useState(tableNames[1] ?? "");
   const [pbc, setPbc] = useState("");
-  const [probe, setProbe] = useState<number | null | "loading" | undefined>(undefined);
+  const [probe, setProbe] = useState<Measure | null | "loading" | undefined>(undefined);
   const runProbe = async () => {
     setProbe("loading");
     const r = await fetch("/api/graph/probe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ a: pa, aCol: pac, b: pb, bCol: pbc }) }).then((x) => x.json());
-    setProbe(r.overlap);
+    setProbe(r.measure ?? null);
   };
 
   return (
@@ -286,8 +295,11 @@ function TestTab({ data }: { data: GraphData }) {
           <div className="mt-3 text-[13px]">
             {probe === null
               ? <span className="text-ink-faint">No values to measure (empty column).</span>
-              : <>Value overlap: <b className={probe >= 0.5 ? "text-emerald-600 dark:text-emerald-400" : probe > 0 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}>{Math.round(probe * 100)}%</b>
-                  <span className="ml-2 text-ink-faint">{probe >= 0.5 ? "real join key" : probe > 0 ? "lossy / partial" : "phantom — no shared values"}</span></>}
+              : <>
+                  Value overlap: <b className={probe.overlap >= 0.5 ? "text-emerald-600 dark:text-emerald-400" : probe.overlap > 0 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}>{Math.round(probe.overlap * 100)}%</b>
+                  <span className="ml-2 text-ink-faint">{probe.overlap >= 0.5 ? "real join key" : probe.overlap > 0 ? "lossy / partial" : "phantom — no shared values"}</span>
+                  <div className="mt-1 font-mono text-[11.5px] text-ink-faint">{probe.matched.toLocaleString()} of {probe.sampled.toLocaleString()} sampled distinct keys match</div>
+                </>}
           </div>
         )}
       </section>
@@ -334,7 +346,10 @@ function EdgesTab({ data, onChanged }: { data: GraphData; onChanged: () => void 
     try {
       const r = await fetch("/api/graph/edge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ a, aCol, b, bCol, label }) }).then((x) => x.json());
       if (r.error) { setMsg({ ok: false, text: r.error }); return; }
-      const ov = r.overlap === null || r.overlap === undefined ? "not measurable" : `${Math.round(r.overlap * 100)}% live overlap`;
+      const m: Measure | null = r.measure ?? null;
+      const ov = m
+        ? `${Math.round(m.overlap * 100)}% live overlap — ${m.matched.toLocaleString()} of ${m.sampled.toLocaleString()} sampled keys match`
+        : "overlap not measurable";
       setMsg({ ok: true, text: `Edge added and verified (${ov}). It’s now part of the graph.` });
       setLabel("");
       onChanged();

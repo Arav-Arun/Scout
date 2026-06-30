@@ -1,20 +1,10 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// RELATIONSHIP KNOWLEDGE  ·  lib/graph/relationships.ts
-//
-// Tables are linked only by shared key columns. This file is where Scout recovers that implicit graph:
-//
-//   1. A CURATED manifest of join edges (authoritative). It captures the edges a
-//      column-name match alone would miss - aliased keys like
-//      `collections.assigned_employee_id -> employees.employee_id`,
-//      `card_transactions.merchant -> merchants.merchant_name`, and
-//      `loan_book.branch -> branches.branch_id`.
-//   2. AUTO-INFERENCE from the live catalog: any key-like column (`*_id`, or a known
-//      join column) shared across tables becomes an edge to its parent table. This
-//      demonstrates relationships can be discovered with no FK metadata at all, and
-//      keeps the graph correct if new tables are uploaded.
-//
+// relationships.ts — the candidate join edges for the schema graph, recovered without any
+// foreign-key metadata:
+//   1. CURATED — an authoritative manifest, including aliased keys a column-name match
+//      misses (e.g. collections.assigned_employee_id → employees.employee_id).
+//   2. INFERRED — any key-like column (*_id or a known join column) shared between a table
+//      and its canonical parent becomes an edge; keeps the graph correct as tables change.
 // buildSchemaGraph() (schema-graph.ts) merges both, curated winning on conflict.
-// ─────────────────────────────────────────────────────────────────────────────
 
 import type { TableInfo } from "../db/clickhouse";
 

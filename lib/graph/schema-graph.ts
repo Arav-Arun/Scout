@@ -1,22 +1,9 @@
-// ─────────────────────────────────────────────────────────────────────────────--------
-// Scout's warehouse is a graph: tables are NODES and the join keys recovered in
-// relationships.ts are EDGES.
-// Graph RAG retrieves a relevant subgraph. Given the tables the planner seeded, we hand the
-// analyst just those tables, the bridge tables needed to join them, and the EXACT join
-// keys - instead of dumping every table flat into the prompt and hoping it guesses the
-// joins (this warehouse has no foreign keys).
-//
-// This file is the whole graph pipeline, top to bottom:
-//   1. BUILD    - assemble nodes + edges from the curated/inferred relationships.
-//   2. VERIFY   - probe each edge against the LIVE data; drop phantom joins.
-//   3. RETRIEVE - walk from the seed tables to the relevant connected subgraph.
-//   4. FORMAT   - render that subgraph as the "JOIN GRAPH" text the analyst reads.
-//
-// ▸ CALL MAP:
-//   - lib/agent/phases.ts (the RELATE phase) calls getSchemaGraph() + retrieveSubgraph().
-//   - app/api/[[...route]]/route.ts (/api/graph) reads the built graph for the in-app viewer.
-//   - relationships.ts supplies the candidate edges (curated manifest + auto-inference).
-// ─────────────────────────────────────────────────────────────────────────────------------
+// schema-graph.ts — the schema knowledge graph: tables are nodes, recovered join keys are
+// edges. The warehouse has no foreign keys, so edges come from relationships.ts (curated +
+// inferred) and user-declared edges. Pipeline: BUILD (assemble edges) → VERIFY (probe each
+// edge against live data, drop phantoms) → RETRIEVE (walk from the seed tables to the
+// relevant subgraph) → FORMAT (render the "JOIN GRAPH" text the analyst reads).
+// Used by lib/agent/phases.ts (RELATE phase) and app/api (/api/graph viewer).
 
 import { getCatalog, type Catalog } from "../db/catalog";
 import { runSelect, type TableInfo } from "../db/clickhouse";
@@ -115,16 +102,15 @@ export function buildSchemaGraph(catalog: Catalog, userEdges: Relationship[] = [
   return { nodes, adj, edges, builtAt: Date.now() };
 }
 
-// ── 2 · VERIFY (makes the graph REAL, not asserted) ──────────────────────────
-// A shared column name does NOT prove two columns join: here
-// `account_transactions.txn_id` and `card_transactions.txn_id` share a name yet have
-// ZERO overlapping values (an inner join returns nothing). So we measure each edge
-// against the live data - what fraction of a child key's sampled distinct values
-// actually resolve to a parent key - then drop the phantoms and mark the rest verified
-// or partial. Fail-open: a probe error/timeout leaves the edge un-judged rather than
-// dropping a possibly-real key.
+// ── 2 · VERIFY ───────────────────────────────────────────────────────────────
+// A shared column name doesn't prove two columns join: account_transactions.txn_id and
+// card_transactions.txn_id share a name but have zero overlapping values (an inner join
+// returns nothing). So each edge is measured against live data — the fraction of a child
+// key's sampled distinct values that resolve to a parent key — then phantoms are dropped
+// and the rest marked verified or partial. Fail-open: a probe error or timeout leaves the
+// edge un-judged rather than dropping a possibly-real key.
 
-/** Distinct child key values sampled per edge (keeps the probe cheap on crore-row tables). */
+/** Distinct child key values sampled per edge (keeps the probe cheap on very large tables). */
 const SAMPLE = 400;
 /** ≥ this fraction of sampled child keys resolving to the parent ⇒ a real ("verified") join key. */
 const STRONG_OVERLAP = 0.5;
@@ -134,14 +120,18 @@ const VERIFY_TTL_MS = 30 * 60_000;
 const _overlapCache = new Map<string, { overlap: number; at: number }>();
 const edgeSig = (e: GraphEdge) => `${e.a}.${e.aCol}~${e.b}.${e.bCol}`;
 
+/** Exact counts behind an overlap measurement, so the number is auditable: `matched` of
+ *  `sampled` distinct child keys resolve to a parent key. `overlap` = matched / sampled. */
+export interface OverlapMeasure { overlap: number; sampled: number; matched: number }
+
 /**
  * Measure how many of a sample of DISTINCT child keys (`a.aCol`) actually exist among the
- * parent keys (`b.bCol`). Returns the overlap fraction, or null if it can't be judged
- * (empty child, probe error/timeout). Uses an `IN (subquery)` semi-join - NOT a LEFT JOIN,
- * because ClickHouse fills unmatched LEFT-JOIN cells with type defaults (not NULL), which
- * would make every edge look like a 100% match.
+ * parent keys (`b.bCol`). Returns the {matched, sampled, overlap} measure, or null if it
+ * can't be judged (empty child, probe error/timeout). Uses an `IN (subquery)` semi-join -
+ * NOT a LEFT JOIN, because ClickHouse fills unmatched LEFT-JOIN cells with type defaults
+ * (not NULL), which would make every edge look like a 100% match.
  */
-export async function measureOverlap(a: string, aCol: string, b: string, bCol: string): Promise<number | null> {
+export async function measureOverlap(a: string, aCol: string, b: string, bCol: string): Promise<OverlapMeasure | null> {
   const sql =
     `SELECT count() AS sampled, ` +
     `countIf(toString(k) IN (SELECT toString(\`${bCol}\`) FROM \`${b}\` WHERE \`${bCol}\` IS NOT NULL)) AS matched ` +
@@ -151,21 +141,22 @@ export async function measureOverlap(a: string, aCol: string, b: string, bCol: s
     const row = r.rows[0] ?? {};
     const sampled = Number(row.sampled ?? 0);
     if (sampled === 0) return null; // child has no values to judge by
-    return Number(row.matched ?? 0) / sampled;
+    const matched = Number(row.matched ?? 0);
+    return { overlap: matched / sampled, sampled, matched };
   } catch {
     return null; // fail open
   }
 }
 
-const probeOverlap = (e: GraphEdge) => measureOverlap(e.a, e.aCol, e.b, e.bCol);
-
-/** Cached overlap lookup: re-probe only edges we haven't measured within the TTL. */
+/** Cached overlap lookup: re-probe only edges we haven't measured within the TTL. The graph
+ *  traversal only needs the fraction, so we cache that; the exact counts are surfaced by the
+ *  Graph Lab's direct probe/declare calls to measureOverlap(). */
 async function overlapFor(e: GraphEdge): Promise<number | null> {
   const hit = _overlapCache.get(edgeSig(e));
   if (hit && Date.now() - hit.at < VERIFY_TTL_MS) return hit.overlap;
-  const overlap = await probeOverlap(e);
-  if (overlap !== null) _overlapCache.set(edgeSig(e), { overlap, at: Date.now() });
-  return overlap;
+  const m = await measureOverlap(e.a, e.aCol, e.b, e.bCol);
+  if (m) _overlapCache.set(edgeSig(e), { overlap: m.overlap, at: Date.now() });
+  return m ? m.overlap : null;
 }
 
 /**

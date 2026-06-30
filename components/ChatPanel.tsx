@@ -1,14 +1,9 @@
 "use client";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// UI · CHAT PANEL (left pane)  ·  components/ChatPanel.tsx
-//
-// The conversation surface: composer, message list, live reasoning-step chips,
-// model picker, file upload, and the DB connection banner.
-//   - MOUNTED BY: app/page.tsx (which owns send()/uploadFile() and all state)
-//   - CALLS:      GET /api/db-info (handled in app/api/[[...route]]/route.ts) for the
-//                 host/db banner; onSend()/onUpload() are passed down from page.tsx.
-// ─────────────────────────────────────────────────────────────────────────────
+// ChatPanel (left pane) — the conversation surface: composer, transcript, live
+// reasoning-step chips, file upload, and settings. Mounted by app/page.tsx, which
+// owns the state and the onSend/onUpload callbacks. Reads GET /api/db-info for the
+// warehouse connection banner.
 
 import { useEffect, useRef, useState } from "react";
 import type { UITurn, AgentBlock } from "@/lib/types";
@@ -30,7 +25,6 @@ import {
 } from "./icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { PropertySearchIcon } from "@hugeicons/core-free-icons";
-import GraphModal from "./GraphModal";
 
 // Render narration with inline `code` and **bold** support.
 function Narration({ text }: { text: string }) {
@@ -76,14 +70,13 @@ export default function ChatPanel({
 }) {
   const [draft, setDraft] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [graphOpen, setGraphOpen] = useState(false);
   const [dbInfo, setDbInfo] = useState<{ host: string; database: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
 
-  // Close Settings panel when clicking outside of it
+  // Close the settings popover on an outside click.
   useEffect(() => {
     if (!settingsOpen) return;
     const handler = (e: MouseEvent) => {
@@ -135,8 +128,6 @@ export default function ChatPanel({
         }}
       />
 
-      <GraphModal open={graphOpen} onClose={() => setGraphOpen(false)} />
-
       {/* header */}
       <div className={`p-3 md:p-3.5 pb-1 shrink-0 ${settingsOpen ? "relative z-40" : "relative z-10"}`}>
         <div className="glass-chrome flex h-14 items-center gap-2.5 rounded-2xl border border-line px-4 shadow-sm relative">
@@ -147,13 +138,13 @@ export default function ChatPanel({
           </div>
 
           <div className="ml-auto flex items-center gap-1">
-            <button
-              onClick={() => setGraphOpen(true)}
-              title="Knowledge graph"
+            <a
+              href="/graph"
+              title="Graph RAG Lab"
               className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-black/5 hover:text-ink-soft dark:hover:bg-white/10"
             >
               <GraphIcon className="h-5 w-5" />
-            </button>
+            </a>
             <button
               ref={settingsButtonRef}
               onClick={() => setSettingsOpen((v) => !v)}
@@ -178,11 +169,10 @@ export default function ChatPanel({
               ref={settingsRef}
               className="absolute right-0 top-[62px] z-30 w-72 rounded-2xl bg-white dark:bg-[#16161c] p-4 shadow-xl border border-line dark:border-zinc-800/80 animate-fade-up flex flex-col gap-4"
             >
-              {/* Preferences Section */}
+              {/* preferences */}
               <div className="flex flex-col gap-3">
                 <div className="text-[11px] font-bold uppercase tracking-wider text-ink-faint">Preferences</div>
-                
-                {/* Theme Toggle Button */}
+
                 <button
                   onClick={onToggleTheme}
                   className="flex w-full cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-[13px] text-ink transition-all hover:bg-black/5 dark:hover:bg-white/10"
@@ -206,7 +196,7 @@ export default function ChatPanel({
 
               </div>
 
-              {/* Database Section */}
+              {/* warehouse connection */}
               <div className="flex flex-col gap-2 border-t border-line/40 pt-3">
                 <div className="text-[11px] font-bold uppercase tracking-wider text-ink-faint">Warehouse Connection</div>
                 <div className="flex items-start gap-2.5 rounded-xl bg-black/5 dark:bg-white/5 px-3 py-2.5 border border-line/20">
@@ -223,7 +213,7 @@ export default function ChatPanel({
                 </div>
               </div>
 
-              {/* Reset Section */}
+              {/* reset */}
               <div className="flex flex-col border-t border-line/40 pt-3">
                 <button
                   onClick={() => {
@@ -333,7 +323,7 @@ function EmptyState({ onPick, onUploadClick }: { onPick: (t: string) => void; on
         </p>
       </div>
 
-      {/* Clickable starter questions */}
+      {/* starter questions */}
       <div className="flex flex-col gap-2 w-full max-w-md">
         <span className="text-[11px] font-bold uppercase tracking-wider text-ink-faint">Try asking</span>
         {SUGGESTIONS.map((s) => (
@@ -348,7 +338,7 @@ function EmptyState({ onPick, onUploadClick }: { onPick: (t: string) => void; on
         ))}
       </div>
 
-      {/* Optional: bring in a new dataset */}
+      {/* upload a new dataset */}
       <button
         onClick={onUploadClick}
         className="flex items-center gap-2 text-[12px] font-semibold text-ink-faint transition-colors hover:text-brand cursor-pointer"
@@ -370,8 +360,7 @@ const KIND_ICON: Record<"discover" | "graph" | "inspect" | "query" | "think", Re
   think: ChartIcon,
 };
 
-// A single reasoning-step chip in the chat transcript (mirrors the collapsible
-// "Found relevant data / Queried the database" rows).
+// A single reasoning-step chip in the chat transcript.
 function StepChip({ step }: { step: Step }) {
   const running = step.status === "running";
   const error = step.status === "error";
