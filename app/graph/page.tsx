@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import GraphCanvas from "@/components/GraphCanvas";
 import { ArrowLeftIcon, SparkIcon } from "@/components/icons";
 
-type Source = "curated" | "inferred" | "user";
+type Source = "declared" | "inferred";
 type Status = "verified" | "partial" | "dropped" | "unjudged";
 
 interface GNode { id: string; rowCount: number; cols: number; columns: string[]; domain: string }
@@ -28,9 +28,8 @@ const STATUS_STYLE: Record<Status, { label: string; cls: string }> = {
   unjudged: { label: "unjudged", cls: "bg-slate-500/12 text-ink-faint" },
 };
 const SOURCE_STYLE: Record<Source, string> = {
-  curated: "bg-brand/12 text-brand",
+  declared: "bg-violet-500/15 text-violet-600 dark:text-violet-400",
   inferred: "bg-slate-500/12 text-ink-faint",
-  user: "bg-violet-500/15 text-violet-600 dark:text-violet-400",
 };
 
 const pct = (o?: number) => (o === undefined || o === null ? "—" : `${Math.round(o * 100)}%`);
@@ -56,7 +55,7 @@ export default function GraphLabPage() {
       verified: c("verified"),
       partial: c("partial"),
       recovered: data.edges.filter((e) => e.aCol !== e.bCol && e.status !== "dropped").length,
-      user: data.edges.filter((e) => e.source === "user").length,
+      declared: data.edges.filter((e) => e.source === "declared").length,
       dropped: data.dropped.length,
     };
   }, [data]);
@@ -91,7 +90,7 @@ export default function GraphLabPage() {
               <Stat label="Renamed recovered" value={stats.recovered} tone="brand" />
               <Stat label="Partial (lossy)" value={stats.partial} tone="amber" />
               <Stat label="Phantoms dropped" value={stats.dropped} tone="red" />
-              <Stat label="User-added" value={stats.user} tone="violet" />
+              <Stat label="Declared" value={stats.declared} tone="violet" />
             </div>
 
             {/* tabs — Visualize / Inspect / Test, with a prominent Add-relationship CTA */}
@@ -179,9 +178,8 @@ function InspectTab({ data }: { data: GraphData }) {
         <select value={src} onChange={(e) => setSrc(e.target.value as typeof src)}
           className="h-9 rounded-lg border border-line bg-transparent px-2.5 text-[13px] outline-none focus:border-brand">
           <option value="all">all sources</option>
-          <option value="curated">curated</option>
+          <option value="declared">declared</option>
           <option value="inferred">inferred</option>
-          <option value="user">user</option>
         </select>
         <label className="flex items-center gap-1.5 text-[12.5px] text-ink-soft">
           <input type="checkbox" checked={showDropped} onChange={(e) => setShowDropped(e.target.checked)} />
@@ -327,31 +325,44 @@ function ColPicker({ label, table, col, tables, cols, onTable, onCol }: {
   );
 }
 
-// ── Add edge ────────────────────────────────────────────────────────────────--
+// ── Relationships (manage declared edges) ─────────────────────────────────────
 function EdgesTab({ data, onChanged }: { data: GraphData; onChanged: () => void }) {
   const tableNames = useMemo(() => data.nodes.map((n) => n.id).sort(), [data]);
   const colsOf = useCallback((t: string) => data.nodes.find((n) => n.id === t)?.columns ?? [], [data]);
-  const userEdges = useMemo(() => data.edges.filter((e) => e.source === "user"), [data]);
+  const declared = useMemo(
+    () => data.edges.filter((e) => e.source === "declared")
+      .sort((x, y) => `${x.a}.${x.aCol}`.localeCompare(`${y.a}.${y.aCol}`)),
+    [data],
+  );
 
   const [a, setA] = useState(tableNames[0] ?? "");
   const [aCol, setACol] = useState("");
   const [b, setB] = useState(tableNames[1] ?? "");
   const [bCol, setBCol] = useState("");
   const [label, setLabel] = useState("");
+  // The original endpoints to tombstone while editing; null when adding a new edge.
+  const [editing, setEditing] = useState<{ a: string; aCol: string; b: string; bCol: string } | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const reset = () => { setEditing(null); setLabel(""); setMsg(null); };
+  const beginEdit = (e: GEdge) => {
+    setEditing({ a: e.a, aCol: e.aCol, b: e.b, bCol: e.bCol });
+    setA(e.a); setACol(e.aCol); setB(e.b); setBCol(e.bCol); setLabel(e.label || ""); setMsg(null);
+  };
 
   const submit = async () => {
     setBusy(true); setMsg(null);
     try {
-      const r = await fetch("/api/graph/edge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ a, aCol, b, bCol, label }) }).then((x) => x.json());
+      const body = { a, aCol, b, bCol, label, ...(editing ? { old: editing } : {}) };
+      const r = await fetch("/api/graph/edge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then((x) => x.json());
       if (r.error) { setMsg({ ok: false, text: r.error }); return; }
       const m: Measure | null = r.measure ?? null;
       const ov = m
         ? `${Math.round(m.overlap * 100)}% live overlap — ${m.matched.toLocaleString()} of ${m.sampled.toLocaleString()} sampled keys match`
         : "overlap not measurable";
-      setMsg({ ok: true, text: `Edge added and verified (${ov}). It’s now part of the graph.` });
-      setLabel("");
+      setMsg({ ok: true, text: `${editing ? "Relationship updated" : "Relationship added"} and verified (${ov}).` });
+      setEditing(null); setLabel("");
       onChanged();
     } catch (e) { setMsg({ ok: false, text: String(e) }); }
     finally { setBusy(false); }
@@ -359,14 +370,15 @@ function EdgesTab({ data, onChanged }: { data: GraphData; onChanged: () => void 
 
   const remove = async (e: GEdge) => {
     await fetch("/api/graph/edge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ a: e.a, aCol: e.aCol, b: e.b, bCol: e.bCol, remove: true }) });
+    if (editing && editing.a === e.a && editing.aCol === e.aCol && editing.b === e.b && editing.bCol === e.bCol) reset();
     onChanged();
   };
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <section className="rounded-xl border border-line p-4">
-        <h2 className="text-[14px] font-bold">Declare a relationship</h2>
-        <p className="mt-1 text-[12px] text-ink-faint">Not every join is a foreign key. Add an edge between two related columns the automatic inference misses — it’s verified against live data, persisted, and merged into the graph right away.</p>
+        <h2 className="text-[14px] font-bold">{editing ? "Edit relationship" : "Declare a relationship"}</h2>
+        <p className="mt-1 text-[12px] text-ink-faint">Declared relationships (the curated seed plus anything you add) are the authoritative, non-inferred join keys. Not every join is a foreign key — declare an edge between two related columns; it’s verified against live data, persisted, and merged into the graph right away.</p>
         <div className="mt-3 space-y-2.5">
           <ColPicker label="From" table={a} col={aCol} tables={tableNames} cols={colsOf(a)} onTable={(t) => { setA(t); setACol(""); }} onCol={setACol} />
           <ColPicker label="To" table={b} col={bCol} tables={tableNames} cols={colsOf(b)} onTable={(t) => { setB(t); setBCol(""); }} onCol={setBCol} />
@@ -376,25 +388,32 @@ function EdgesTab({ data, onChanged }: { data: GraphData; onChanged: () => void 
               className="h-8 flex-1 rounded-lg border border-line bg-transparent px-2.5 text-[12.5px] outline-none focus:border-brand" />
           </div>
         </div>
-        <button onClick={submit} disabled={busy || !a || !aCol || !b || !bCol}
-          className="mt-3 rounded-lg bg-brand px-3.5 py-1.5 text-[13px] font-semibold text-white disabled:opacity-40">
-          {busy ? "Adding…" : "Add edge"}
-        </button>
+        <div className="mt-3 flex items-center gap-2">
+          <button onClick={submit} disabled={busy || !a || !aCol || !b || !bCol}
+            className="rounded-lg bg-brand px-3.5 py-1.5 text-[13px] font-semibold text-white disabled:opacity-40">
+            {busy ? "Saving…" : editing ? "Save changes" : "Add edge"}
+          </button>
+          {editing && <button onClick={reset} className="rounded-lg px-3 py-1.5 text-[13px] font-semibold text-ink-soft hover:bg-black/5 dark:hover:bg-white/10">Cancel</button>}
+        </div>
         {msg && <div className={`mt-3 rounded-lg px-3 py-2 text-[12.5px] ${msg.ok ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-red-500/10 text-red-600"}`}>{msg.text}</div>}
       </section>
 
       <section className="rounded-xl border border-line p-4">
-        <h2 className="text-[14px] font-bold">User-added edges <span className="text-ink-faint">({userEdges.length})</span></h2>
-        {userEdges.length === 0
-          ? <p className="mt-2 text-[12.5px] text-ink-faint">None yet. Edges you declare appear here and in Inspect, tagged <span className="rounded px-1 py-0.5 text-[10.5px] font-semibold bg-violet-500/15 text-violet-600 dark:text-violet-400">user</span>.</p>
-          : <ul className="mt-3 space-y-2">
-              {userEdges.map((e, i) => (
+        <h2 className="text-[14px] font-bold">Declared relationships <span className="text-ink-faint">({declared.length})</span></h2>
+        <p className="mt-1 text-[11.5px] text-ink-faint">Every authoritative join key, all editable. Inferred edges are automatic and not listed here.</p>
+        {declared.length === 0
+          ? <p className="mt-2 text-[12.5px] text-ink-faint">None yet.</p>
+          : <ul className="mt-3 max-h-[460px] space-y-2 overflow-y-auto pr-1">
+              {declared.map((e, i) => (
                 <li key={i} className="flex items-center justify-between gap-3 rounded-lg border border-line/70 px-3 py-2">
                   <div className="min-w-0">
-                    <div className="font-mono text-[11.5px] text-ink">{e.a}.{e.aCol} = {e.b}.{e.bCol}</div>
-                    <div className="text-[11px] text-ink-faint">{e.label} · {pct(e.overlap)} overlap</div>
+                    <div className="truncate font-mono text-[11.5px] text-ink">{e.a}.{e.aCol} = {e.b}.{e.bCol}</div>
+                    <div className="truncate text-[11px] text-ink-faint">{e.label} · {pct(e.overlap)} overlap</div>
                   </div>
-                  <button onClick={() => remove(e)} className="shrink-0 rounded-md px-2 py-1 text-[11.5px] font-semibold text-red-500 hover:bg-red-500/10">Remove</button>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button onClick={() => beginEdit(e)} className="rounded-md px-2 py-1 text-[11.5px] font-semibold text-brand hover:bg-brand/10">Edit</button>
+                    <button onClick={() => remove(e)} className="rounded-md px-2 py-1 text-[11.5px] font-semibold text-red-500 hover:bg-red-500/10">Delete</button>
+                  </div>
                 </li>
               ))}
             </ul>}

@@ -14,8 +14,9 @@ export interface Relationship {
   to: { table: string; column: string };
   /** Human label for the relationship (shown to the LLM and in the UI). */
   label: string;
-  /** "curated" + "user" edges are authoritative; "inferred" come from column-name matching. */
-  source?: "curated" | "inferred" | "user";
+  /** "declared" edges are human-asserted and authoritative (the curated seed + user edits,
+   *  all editable from the Graph Lab); "inferred" come from column-name matching. */
+  source?: "declared" | "inferred";
 }
 
 /**
@@ -51,10 +52,12 @@ export const PARENT_OF_COLUMN: Record<string, string> = {
 
 // child[table.column] -> parent.column.  Curated, authoritative edges.
 const C = (table: string, column: string, toTable: string, toColumn: string, label: string): Relationship => ({
-  from: { table, column }, to: { table: toTable, column: toColumn }, label, source: "curated",
+  from: { table, column }, to: { table: toTable, column: toColumn }, label, source: "declared",
 });
 
-/** Curated edges - the source of truth, including the aliased keys inference can't see. */
+/** The curated manifest, including the aliased keys inference can't see. This is the SEED for
+ *  the editable declared-edges store (scout_user_edges): user-edges.ts loads it in once, after
+ *  which every edge is editable/deletable from the Graph Lab. */
 export const CURATED_RELATIONSHIPS: Relationship[] = [
   // ── customer_id -> customers (the central hub) ───────────────────────────────
   ...["accounts", "cards", "card_applications", "account_transactions", "loan_applications",

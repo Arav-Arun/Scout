@@ -9,7 +9,7 @@ import { useMemo, useState } from "react";
 interface GNode { id: string; rowCount: number; domain: string }
 interface GEdge {
   a: string; b: string; aCol: string; bCol: string;
-  source: "curated" | "inferred" | "user"; overlap?: number; verified?: boolean;
+  source: "declared" | "inferred"; overlap?: number; verified?: boolean;
 }
 
 const DOMAIN_COLORS: Record<string, string> = {
@@ -58,15 +58,15 @@ export default function GraphCanvas({ nodes, edges }: { nodes: GNode[]; edges: G
             const hub = HUB.has(e.aCol) || HUB.has(e.bCol);
             const inc = hover && (e.a === hover || e.b === hover);
             const partial = e.verified === false; // measured against live data, but low overlap
-            // Highlight colour by edge type: amber = lossy, violet = user-declared, blue = recovered key.
-            const hi = partial ? "#f59e0b" : e.source === "user" ? "#8b5cf6" : "#2f6bff";
+            const declared = e.source === "declared";
+            // Colour by verdict: amber = lossy/partial, blue = verified, violet = declared-but-unjudged.
+            const hi = partial ? "#f59e0b" : e.verified ? "#2f6bff" : declared ? "#8b5cf6" : "#2f6bff";
             let stroke = "rgba(148,163,184,0.28)", w = 1, op = 1;
             let dash: string | undefined = e.source === "inferred" ? "3 3" : undefined;
             if (hub) { stroke = "rgba(148,163,184,0.12)"; w = 0.6; }
             else if (partial) { stroke = "rgba(245,158,11,0.6)"; w = 1; dash = "4 3"; }
-            else if (e.source === "user") { stroke = "rgba(139,92,246,0.6)"; w = 1.3; dash = undefined; }
             else if (e.verified) { stroke = "rgba(47,107,255,0.5)"; w = 1.25; dash = undefined; }
-            else if (e.source === "curated") { stroke = "rgba(47,107,255,0.4)"; w = 1.1; }
+            else if (declared) { stroke = "rgba(139,92,246,0.55)"; w = 1.2; dash = undefined; } // declared, unjudged
             if (hover) { if (inc) { stroke = hi; w = 1.8; dash = partial ? "4 3" : undefined; } else { op = 0.06; } }
             const pct = e.overlap !== undefined ? ` · ${Math.round(e.overlap * 100)}% overlap` : "";
             return (
@@ -112,7 +112,7 @@ export default function GraphCanvas({ nodes, edges }: { nodes: GNode[]; edges: G
           <div className="flex flex-wrap gap-x-4 gap-y-2.5 text-[12.5px] font-medium text-ink-soft md:flex-col">
             <span className="flex items-center gap-2.5"><span className="inline-block w-6 border-t-2" style={{ borderColor: "rgba(47,107,255,0.7)" }} />verified join</span>
             <span className="flex items-center gap-2.5"><span className="inline-block w-6 border-t-2 border-dashed" style={{ borderColor: "rgba(245,158,11,0.85)" }} />partial overlap</span>
-            <span className="flex items-center gap-2.5"><span className="inline-block w-6 border-t-2" style={{ borderColor: "rgba(139,92,246,0.85)" }} />user-declared</span>
+            <span className="flex items-center gap-2.5"><span className="inline-block w-6 border-t-2" style={{ borderColor: "rgba(139,92,246,0.85)" }} />declared</span>
           </div>
         </div>
 

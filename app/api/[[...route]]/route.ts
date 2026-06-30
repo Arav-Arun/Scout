@@ -11,7 +11,7 @@ import {
   getSchemaGraph, invalidateSchemaGraph, retrieveSubgraph, formatGraphForPrompt, measureOverlap,
 } from "@/lib/graph/schema-graph";
 import { persistSchemaGraph } from "@/lib/graph/persist";
-import { addUserEdge, removeUserEdge } from "@/lib/graph/user-edges";
+import { addUserEdge, removeUserEdge, editUserEdge } from "@/lib/graph/user-edges";
 import { tableDomain } from "@/lib/graph/relationships";
 import type { ChatTurn, ScoutEvent } from "@/lib/types";
 
@@ -188,13 +188,13 @@ export async function POST(
         });
       }
 
-      // Add / remove a user-declared edge (a relationship that isn't a foreign key).
+      // Add / edit / delete a declared edge. ("inferred" edges are automatic, not editable.)
       if (sub === "edge") {
-        const { a, aCol, b, bCol, label, remove } = body as Record<string, string | boolean>;
-        if (!a || !aCol || !b || !bCol) {
+        const { a, aCol, b, bCol, label, remove, old } = body as Record<string, unknown>;
+        const edge = { a: String(a ?? ""), aCol: String(aCol ?? ""), b: String(b ?? ""), bCol: String(bCol ?? "") };
+        if (!edge.a || !edge.aCol || !edge.b || !edge.bCol) {
           return Response.json({ error: "a, aCol, b, bCol are required" }, { status: 400 });
         }
-        const edge = { a: String(a), aCol: String(aCol), b: String(b), bCol: String(bCol) };
 
         if (remove) {
           await removeUserEdge(edge);
@@ -202,7 +202,7 @@ export async function POST(
           return Response.json({ ok: true });
         }
 
-        // Validate both columns really exist before persisting, so the graph stays clean.
+        // Validate both columns of the (new) edge really exist before persisting.
         const cat = await getCatalog();
         const colsOf = (t: string) => cat.tables.find((x) => x.name === t)?.columns.map((c) => c.name);
         const aCols = colsOf(edge.a), bCols = colsOf(edge.b);
@@ -212,14 +212,21 @@ export async function POST(
         if (!bCols.includes(edge.bCol)) return Response.json({ error: `${edge.b} has no column ${edge.bCol}` }, { status: 400 });
         if (edge.a === edge.b) return Response.json({ error: "An edge must connect two different tables" }, { status: 400 });
 
-        await addUserEdge({ ...edge, label: typeof label === "string" ? label : undefined });
+        const withLabel = { ...edge, label: typeof label === "string" ? label : undefined };
+        // `old` present => edit (tombstone the previous endpoints, then add the new ones); else add.
+        if (old && typeof old === "object") {
+          const o = old as Record<string, unknown>;
+          await editUserEdge({ a: String(o.a), aCol: String(o.aCol), b: String(o.b), bCol: String(o.bCol) }, withLabel);
+        } else {
+          await addUserEdge(withLabel);
+        }
         invalidateSchemaGraph();
         const measure = await measureOverlap(edge.a, edge.aCol, edge.b, edge.bCol); // immediate feedback
-        // Re-snapshot so the persisted graph reflects the new edge. Best-effort.
+        // Re-snapshot so the persisted graph reflects the change. Best-effort.
         try {
           await persistSchemaGraph(await getSchemaGraph());
         } catch {
-          /* snapshot refresh failed; the in-memory graph already has the edge */
+          /* snapshot refresh failed; the in-memory graph already has the change */
         }
         return Response.json({ ok: true, measure });
       }

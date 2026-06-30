@@ -28,31 +28,33 @@ flowchart TB
     HOOK["useScoutAgent<br/>(state + NDJSON reader)"]
     CHAT["ChatPanel<br/>(step chips + composer)"]
     DASH["DashboardPanel + EChart"]
-    GMODAL["GraphModal<br/>(schema-graph viewer)"]
+    GLAB["/graph — Graph RAG Lab<br/>(GraphCanvas · Visualize/Inspect/Test/Manage edges)"]
   end
 
   subgraph API["API — app/api route"]
     CHATAPI["POST /api/chat<br/>(NDJSON stream)"]
     UPAPI["POST /api/upload"]
-    GRAPHAPI["GET /api/graph"]
+    GRAPHAPI["GET /api/graph<br/>+ POST graph/probe·retrieve·edge"]
   end
 
   subgraph AGENT["lib/agent — 6-phase orchestrator"]
     WF["workflow.ts"]
-    PH["phases.ts<br/>(+ column guard)"]
+    PH["phases.ts<br/>(+ table/column guard)"]
     LLM["llm.ts + prompts.ts"]
   end
 
   subgraph GRAPH["lib/graph — Graph RAG"]
-    REL["relationships.ts<br/>(curated + inferred)"]
+    REL["relationships.ts<br/>(curated seed + inference)"]
+    UE["user-edges.ts<br/>(declared store: curated seed + edits)"]
     SG["schema-graph.ts<br/>(build/verify/retrieve/format)"]
+    PERSIST["persist.ts<br/>(graph snapshot)"]
   end
 
   subgraph DB["lib/db — ClickHouse layer"]
     CH["clickhouse.ts<br/>(read-only)"]
     CAT["catalog.ts<br/>(cached map)"]
     PROF["profile.ts"]
-    ING["ingest.ts<br/>(write path)"]
+    ING["ingest.ts + write.ts<br/>(write path)"]
   end
 
   OPENAI[["OpenAI API"]]
@@ -62,17 +64,20 @@ flowchart TB
   DASH --- HOOK
   HOOK -->|question| CHATAPI
   CHAT -->|file| UPAPI
-  GMODAL -->|fetch| GRAPHAPI
+  CHAT -->|graph icon| GLAB
+  GLAB -->|fetch| GRAPHAPI
 
   CHATAPI --> WF --> PH
   PH --> LLM --> OPENAI
   PH --> SG --> REL
+  SG --> UE --> CH
   PH --> CAT
   PH --> PROF
   CAT --> CH
   PROF --> CH
   SG --> CH --> CLICK
   GRAPHAPI --> SG
+  GRAPHAPI --> PERSIST --> CH
   UPAPI --> ING --> CLICK
   CHATAPI -.->|NDJSON events| HOOK
 ```
@@ -144,14 +149,16 @@ The whole engine is [`lib/graph/schema-graph.ts`](lib/graph/schema-graph.ts) +
 
 ```mermaid
 flowchart LR
-  subgraph SRC["Edge sources — relationships.ts"]
-    CUR["CURATED_RELATIONSHIPS<br/>(incl. aliased keys)"]
-    INF["inferRelationships<br/>(*_id → parent, from catalog)"]
+  subgraph STORE["Declared-edge store — user-edges.ts (scout_user_edges)"]
+    CUR["CURATED_RELATIONSHIPS<br/>(seeded once)"]
+    EDITS["user add / edit / delete<br/>(Graph RAG Lab)"]
   end
-  CUR --> B
-  INF --> B
-  B["1 · BUILD<br/>merge edges (curated wins),<br/>keep only real tables + cols"] --> V
-  V["2 · VERIFY<br/>probe 400 keys via IN-subquery semi-join<br/>drop 0% phantoms · mark verified / partial"] --> RET
+  CUR --> DECL["DECLARED edges<br/>(authoritative, editable)"]
+  EDITS --> DECL
+  INF["inferRelationships<br/>(*_id → parent, from catalog)"] --> B
+  DECL --> B
+  B["1 · BUILD<br/>merge edges (declared > inferred),<br/>keep only real tables + cols"] --> V
+  V["2 · VERIFY<br/>probe 400 keys via IN-subquery semi-join<br/>drop 0% phantoms · mark verified / partial<br/>(declared edges measured but never dropped)"] --> RET
   SEEDS["planner seed tables"] --> RET
   RET["3 · RETRIEVE — retrieveSubgraph<br/>BFS shortest join path · avoid hubs · enrich"] --> FMT
   FMT["4 · FORMAT — formatGraphForPrompt<br/>JOIN GRAPH text → analyst LLM"]
@@ -161,17 +168,19 @@ flowchart LR
 
 - **Nodes** - every table in the live catalog (`system.columns`), carrying its column list and a
   free row-count estimate (`buildSchemaGraph`).
-- **Edges** - the implicit join keys, recovered two ways and merged:
-  - **Curated manifest** (`CURATED_RELATIONSHIPS`) - authoritative, hand-declared edges. This is the
-    source of truth and captures the **aliased** keys a name match can't see (e.g.
-    `card_transactions.merchant` → `merchants.merchant_name`).
-  - **Auto-inference** (`inferRelationships`) - recovered purely from the catalog with zero FK
-    metadata: any key-like column (`*_id`, or a known join column in `PARENT_OF_COLUMN`) that exists
-    both on a table and on its **canonical parent** becomes an edge. This keeps the graph correct
-    when **new tables are uploaded**, and proves relationships are discoverable with no FK metadata.
+- **Edges** - the implicit join keys, from two sources and merged:
+  - **Declared** (`user-edges.ts`, stored in `scout_user_edges`) - the authoritative, human-asserted
+    edges, **all editable from the Graph RAG Lab** (add / edit / delete). The store is **seeded once**
+    with the curated manifest (`CURATED_RELATIONSHIPS`), which captures the **aliased** keys a name
+    match can't see (e.g. `card_transactions.merchant` → `merchants.merchant_name`); from then on the
+    seed and any user edits live together as one editable set.
+  - **Inferred** (`inferRelationships`) - recovered purely from the catalog with zero FK metadata: any
+    key-like column (`*_id`, or a known join column in `PARENT_OF_COLUMN`) that exists both on a table
+    and on its **canonical parent** becomes an edge. This keeps the graph correct when **new tables are
+    uploaded**, and proves relationships are discoverable with no FK metadata.
 
-  `buildSchemaGraph()` merges both (**curated wins on conflict**) and every edge must exist in the
-  live catalog — both tables present, both join columns real — defending against stale curation.
+  `buildSchemaGraph()` merges both (**declared wins over inferred**) and every edge must exist in the
+  live catalog — both tables present, both join columns real — defending against stale data.
 
 ### 3.2 Verify - drop phantom joins against live data
 
@@ -180,8 +189,10 @@ A shared column name does **not** prove two columns join. `account_transactions.
 samples each child key (400 distinct values) and measures the fraction that actually resolves to the
 parent.
 Edges at 0% overlap are **dropped as phantoms**; the rest are marked `verified` (≥50%) or flagged **partial** so the
-analyst is warned a join is lossy.
+analyst is warned a join is lossy. The overlap is **auditable** — `measureOverlap` returns the exact
+`matched` / `sampled` counts behind the percentage, surfaced in the Lab.
 It **fails open**: a probe timeout leaves an edge un-judged rather than dropping a possibly-real key.
+Declared edges are measured the same way but **never dropped** (a human asserted them); a lossy one is still flagged partial.
 
 ### 3.3 Retrieve - `retrieveSubgraph()`
 
@@ -202,9 +213,11 @@ connected subgraph plus the exact join map:
   these recovered keys (partial edges are flagged as lossy).
 - The graph is also **load-bearing at query time**, not just for retrieval. Because there are no FKs,
   the analyst sometimes references a column on a table that doesn't own it. `checkColumns()`
-  (pre-flight) and `enrichColumnError()` (on a ClickHouse error) use the subgraph to tell it *which
-  table owns the column and the exact join key to reach it* — so the retry is grounded instead of
-  another guess.
+  (pre-flight) and `enrichError()` (on a ClickHouse error) use the subgraph to tell it *which table
+  owns the column and the exact join key to reach it* — so the retry is grounded instead of another
+  guess. `enrichError()` also catches an **unknown-table** reference (e.g. a name the model invented,
+  or an upload that never persisted): it names the real tables and the closest match, so the agent
+  stops re-querying a phantom table and reports clearly instead of failing cryptically.
 
 ### 3.5 Where it runs
 
@@ -215,8 +228,20 @@ DISCOVER → PLAN → [ RELATE ] → INSPECT → ANALYZE↺ → SYNTHESIZE
 
 The **RELATE** phase ([`lib/agent/phases.ts`](lib/agent/phases.ts)) sits between PLAN and INSPECT.
 
-You can see the exact graph the agent walks in the in-app **Schema Knowledge Graph** viewer (graph
-icon, top of the chat panel), also served as JSON at `/api/graph`.
+### 3.6 The Graph RAG Lab (`/graph`)
+
+The graph the agent walks is also a first-class in-app page ([`app/graph/page.tsx`](app/graph/page.tsx)) —
+open it from the **graph icon** at the top of the chat panel (served as JSON at `/api/graph`). Four tabs:
+
+- **Visualize** - the schema graph drawn as nodes (tables, coloured by sub-domain) and edges
+  (verified / partial / declared), pure SVG, no graph library.
+- **Inspect** - every recovered edge with its source, live value-overlap, and verdict (verified /
+  partial / dropped phantom), including the dropped phantoms.
+- **Test** - pick seed tables and see the exact subgraph + `JOIN GRAPH` the RELATE phase would build,
+  or probe any two columns for their live overlap (with the exact matched / sampled counts).
+- **Add relationship** - manage every declared edge in one place (the curated seed plus your own):
+  add, edit, or delete a non-foreign-key edge between two related columns. Each change is verified
+  against live data, persisted (`scout_user_edges`), and merged into the graph immediately.
 
 
 
@@ -249,27 +274,31 @@ only `lib/types.ts`; the **agent** lives in `lib/agent/`; the **graph** in `lib/
 ```
 app/
   page.tsx                 UI shell (state lives in hooks/useScoutAgent.ts)
-  api/[[...route]]/route.ts API router: /api/chat (stream), /api/upload, /api/db-info, /api/graph
+  graph/page.tsx           Graph RAG Lab (Visualize / Inspect / Test / Add edge)
+  api/[[...route]]/route.ts API router: /api/chat, /api/upload, /api/db-info, /api/graph (+ graph/probe·retrieve·edge)
   health/route.ts          liveness probe
-components/                ChatPanel, DashboardPanel + EChart, GraphModal (graph viewer), icons
+components/                ChatPanel, DashboardPanel + EChart, GraphCanvas (graph viewer), icons
   components.css           all hand-written component styles (the rest is Tailwind utilities)
-hooks/useScoutAgent.ts     client state: turns, dashboard versions, streaming, upload
+hooks/useScoutAgent.ts     client state: turns, dashboard versions, streaming, upload (progress + timeout)
 lib/
   types.ts                 shared contract: streaming events + dashboard shape
   agent/
     workflow.ts            the 6-phase orchestrator
-    phases.ts              the six phases + the graph-backed column guard + dashboard coercion
+    phases.ts              the six phases + the graph-backed table/column guard + dashboard coercion
     context.ts             shared shapes (Plan/AnalyzeResult) + prompt formatters
     prompts.ts             all LLM system prompts
     llm.ts                 OpenAI client wrapper (llmJSON)
   graph/                   ── GRAPH RAG ──
-    relationships.ts       recovers implicit join edges (curated manifest + auto-inference, no FKs)
+    relationships.ts       the curated seed + key-column inference for the join graph (no FKs)
+    user-edges.ts          editable declared-edge store (curated seed + user add/edit/delete)
     schema-graph.ts        build → verify → retrieveSubgraph → formatGraphForPrompt
+    persist.ts             durable snapshot of the verified graph → scout_schema_graph_*
   db/                      ── CLICKHOUSE ──
     clickhouse.ts          read-only query layer (runSelect / describeTable)
     catalog.ts             cached warehouse catalog
     parsers.ts             CSV/TSV/JSON/Excel parsing + schema inference
-    ingest.ts              the one write path: CREATE TABLE + bulk INSERT
+    ingest.ts              file ingestion: CREATE TABLE + bulk INSERT
+    write.ts               HTTP write transport (chExec) for ingest + graph persistence
     profile.ts             samples categorical column values for the analyst
 scripts/
   seed_graph.mjs           generates the interconnected no-FK warehouse

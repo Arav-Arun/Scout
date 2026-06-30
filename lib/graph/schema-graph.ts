@@ -7,10 +7,8 @@
 
 import { getCatalog, type Catalog } from "../db/catalog";
 import { runSelect, type TableInfo } from "../db/clickhouse";
-import {
-  CURATED_RELATIONSHIPS, inferRelationships, HUB_COLUMNS, type Relationship,
-} from "./relationships";
-import { loadUserEdges } from "./user-edges";
+import { inferRelationships, HUB_COLUMNS, type Relationship } from "./relationships";
+import { loadUserEdges, seedDeclaredEdges } from "./user-edges";
 
 /** An undirected edge between two tables, carrying the exact join columns. */
 export interface GraphEdge {
@@ -19,7 +17,7 @@ export interface GraphEdge {
   aCol: string;
   bCol: string;
   label: string;
-  source: "curated" | "inferred" | "user";
+  source: "declared" | "inferred";
   /** Fraction of sampled `a.aCol` values that actually resolve to `b.bCol` in the LIVE
    *  data (set by VERIFY). undefined = not yet / couldn't be measured. */
   overlap?: number;
@@ -64,27 +62,27 @@ function hasColumn(t: TableInfo | undefined, col: string): boolean {
 }
 
 /**
- * Build the schema graph from a catalog: nodes are the catalog tables, edges are the
- * curated + inferred relationships, filtered to tables/columns that actually exist and
- * de-duplicated (curated wins over inferred for the same table pair + columns).
+ * Build the schema graph from a catalog: nodes are the catalog tables, edges are the declared
+ * (loaded from the store) + inferred relationships, filtered to tables/columns that actually
+ * exist and de-duplicated (declared wins over inferred for the same table pair + columns).
  */
-export function buildSchemaGraph(catalog: Catalog, userEdges: Relationship[] = []): SchemaGraph {
+export function buildSchemaGraph(catalog: Catalog, declaredEdges: Relationship[] = []): SchemaGraph {
   const present = new Set(catalog.tables.map((t) => t.name));
   const byName = new Map(catalog.tables.map((t) => [t.name, t]));
-  // Priority order: user-declared > curated > inferred. The first edge seen for a key wins.
-  const all: Relationship[] = [...userEdges, ...CURATED_RELATIONSHIPS, ...inferRelationships(catalog.tables)];
+  // Priority order: declared > inferred. The first edge seen for a key wins.
+  const all: Relationship[] = [...declaredEdges, ...inferRelationships(catalog.tables)];
 
   const seen = new Map<string, GraphEdge>();
   for (const r of all) {
     if (!present.has(r.from.table) || !present.has(r.to.table) || r.from.table === r.to.table) continue;
-    // Require the columns to really exist on both sides (defends against stale curation / typos).
+    // Require the columns to really exist on both sides (defends against stale data / typos).
     if (!hasColumn(byName.get(r.from.table), r.from.column) || !hasColumn(byName.get(r.to.table), r.to.column)) continue;
     const k = edgeKey(r.from.table, r.from.column, r.to.table, r.to.column);
     const existing = seen.get(k);
-    if (existing && (existing.source === "user" || existing.source === "curated")) continue; // authoritative wins
+    if (existing && existing.source === "declared") continue; // declared is authoritative
     seen.set(k, {
       a: r.from.table, b: r.to.table, aCol: r.from.column, bCol: r.to.column,
-      label: r.label, source: r.source ?? "curated",
+      label: r.label, source: r.source ?? "declared",
     });
   }
 
@@ -182,12 +180,12 @@ async function verifyEdges(graph: SchemaGraph): Promise<void> {
   await Promise.all(Array.from({ length: Math.min(VERIFY_CONCURRENCY, edges.length) }, worker));
 
   // Retain the confirmed phantoms (exactly 0% overlap) for persistence/diagnostics before
-  // they're dropped from the traversable graph below. User-declared edges are never dropped
-  // (the user asserted the relationship) — their overlap is still measured and shown.
-  graph.droppedEdges = edges.filter((e) => e.overlap === 0 && e.source !== "user");
+  // they're dropped from the traversable graph below. Declared edges are never dropped
+  // (a human asserted the relationship) — their overlap is still measured and shown.
+  graph.droppedEdges = edges.filter((e) => e.overlap === 0 && e.source !== "declared");
 
-  // Drop confirmed phantoms (measured exactly 0% overlap); keep partial, un-judged + user edges.
-  const kept = edges.filter((e) => e.source === "user" || e.overlap === undefined || e.overlap > 0);
+  // Drop confirmed phantoms (measured exactly 0% overlap); keep partial, un-judged + declared edges.
+  const kept = edges.filter((e) => e.source === "declared" || e.overlap === undefined || e.overlap > 0);
   if (kept.length !== edges.length) {
     graph.edges = kept;
     for (const list of graph.adj.values()) list.length = 0;
@@ -205,7 +203,7 @@ let _graphCatalogAt = 0;
 let _building: Promise<SchemaGraph> | null = null;
 let _buildingForAt = 0;
 
-/** Force the next getSchemaGraph() to rebuild — call after user edges change (the catalog
+/** Force the next getSchemaGraph() to rebuild — call after declared edges change (the catalog
  *  timestamp is unchanged, so the cache wouldn't otherwise notice). */
 export function invalidateSchemaGraph(): void {
   _graph = null;
@@ -224,8 +222,9 @@ export async function getSchemaGraph(): Promise<SchemaGraph> {
 
   _buildingForAt = cat.discoveredAt;
   _building = (async () => {
-    const userEdges = await loadUserEdges();
-    const g = buildSchemaGraph(cat, userEdges);
+    await seedDeclaredEdges();            // one-time curated seed into the store (idempotent)
+    const declaredEdges = await loadUserEdges();
+    const g = buildSchemaGraph(cat, declaredEdges);
     try {
       await verifyEdges(g);
     } catch {

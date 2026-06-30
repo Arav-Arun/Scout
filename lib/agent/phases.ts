@@ -194,12 +194,26 @@ function checkColumns(sql: string, idx: ColumnIndex, sub: SubGraph): string | nu
 }
 
 /**
- * Append a grounded hint to a ClickHouse "unknown identifier" error so the retry is
- * actionable. Resolves the offending identifier against (a) the in-scope inspected tables
- * and (b) the FULL catalog, so it can tell the analyst "that column actually lives on table
- * X - query/join X" even when the planner seeded the wrong table (the `net_revenue` case).
+ * Append a grounded hint to a ClickHouse error so the retry is actionable. Handles two cases:
+ * (1) an unknown TABLE — the analyst referenced a table that doesn't exist (e.g. an upload
+ * that never persisted, or a name hallucinated from the question) — so we name the real
+ * tables and the closest match; (2) an unknown COLUMN — resolve it against the in-scope
+ * tables and the full catalog, so we can say "that column lives on table X — query/join X".
  */
-function enrichColumnError(message: string, sql: string, idx: ColumnIndex, sub: SubGraph, cat: Catalog): string {
+function enrichError(message: string, sql: string, idx: ColumnIndex, sub: SubGraph, cat: Catalog): string {
+  // (1) Unknown table: the referenced table isn't in the warehouse at all. Without this the
+  //     analyst re-queries the same phantom table until it runs out of attempts.
+  const tbl = message.match(/Unknown table expression identifier\s*['"`]?([A-Za-z0-9_.]+)['"`]?/i);
+  if (tbl) {
+    const ref = tbl[1].replace(/^.*\./, ""); // strip any db. prefix
+    const all = cat.tables.map((t) => t.name);
+    const close = all.filter((n) => n === ref || n.includes(ref) || ref.includes(n) || n.startsWith(ref.slice(0, 6)));
+    const suggest = close.length ? ` Did you mean: ${close.slice(0, 3).map((n) => `\`${n}\``).join(", ")}?` : "";
+    const list = all.slice(0, 20).join(", ") + (all.length > 20 ? `, …(+${all.length - 20})` : "");
+    return `${message}  Hint: there is NO table named \`${ref}\` in the warehouse.${suggest} Only query tables that exist — available tables: ${list}.`;
+  }
+
+  // (2) Unknown column: resolve which table actually owns it.
   const m = message.match(/(?:Unknown (?:expression )?identifier|Missing columns?:?)\s*['"`]?([A-Za-z_]\w*)['"`]?/i);
   const col = m?.[1];
   if (!col) return message;
@@ -295,10 +309,10 @@ export async function analyze(plan: Plan, schemas: TableInfo[], sub: SubGraph, c
       results.push({ purpose, sql: decision.sql, columns: res.columns.map((c) => c.name), rows: res.rows.slice(0, 40), rowCount: res.rowCount });
       emit({ type: "step", id, kind: "query", status: "done", label: "Queried ClickHouse", detail: `${purpose} · ${res.rowCount} row${res.rowCount === 1 ? "" : "s"} · ${res.elapsedMs}ms` });
     } catch (e) {
-      // Enrich a ClickHouse "unknown column" error with the table that actually owns
-      // the column + the join key, so the retry is grounded (catches the unqualified
-      // case the pre-flight deliberately leaves alone).
-      const msg = enrichColumnError(errMsg(e), decision.sql, colIndex, sub, cat);
+      // Enrich a ClickHouse error so the retry is grounded: a missing table is named
+      // against the real catalog; a missing column is resolved to the table that owns it
+      // (catching the unqualified case the pre-flight deliberately leaves alone).
+      const msg = enrichError(errMsg(e), decision.sql, colIndex, sub, cat);
       results.push({ purpose, sql: decision.sql, rows: [], rowCount: 0, error: msg });
       emit({ type: "step", id, kind: "query", status: "error", label: "Query failed", detail: msg.slice(0, 140) });
     }
@@ -317,7 +331,13 @@ export async function synthesize(plan: Plan, results: AnalyzeResult[], queries: 
   const hasSuccessfulQuery = results.some((r) => !r.error && r.rowCount >= 0 && r.rows);
   if (hasQueries && !hasSuccessfulQuery) {
     emit({ type: "step", id, kind: "think", status: "error", label: "No data to synthesise" });
-    emit({ type: "text", delta: "I couldn't gather enough data to answer that. Could you rephrase or narrow the question?" });
+    // If every query failed because the table doesn't exist, say so plainly and list what's
+    // available — far more useful than a generic "rephrase" when an upload never persisted.
+    const missingTable = results.some((r) => /Unknown table expression identifier/i.test(r.error ?? ""));
+    const msg = missingTable
+      ? `I couldn't find the table you asked about. Available tables: ${cat.tables.map((t) => t.name).slice(0, 20).join(", ")}. Name one of those, or re-upload the file if you meant a new dataset.`
+      : "I couldn't gather enough data to answer that. Could you rephrase or narrow the question?";
+    emit({ type: "text", delta: msg });
     return null;
   }
   try {
