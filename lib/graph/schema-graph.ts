@@ -23,6 +23,7 @@ import { runSelect, type TableInfo } from "../db/clickhouse";
 import {
   CURATED_RELATIONSHIPS, inferRelationships, HUB_COLUMNS, type Relationship,
 } from "./relationships";
+import { loadUserEdges } from "./user-edges";
 
 /** An undirected edge between two tables, carrying the exact join columns. */
 export interface GraphEdge {
@@ -31,7 +32,7 @@ export interface GraphEdge {
   aCol: string;
   bCol: string;
   label: string;
-  source: "curated" | "inferred";
+  source: "curated" | "inferred" | "user";
   /** Fraction of sampled `a.aCol` values that actually resolve to `b.bCol` in the LIVE
    *  data (set by VERIFY). undefined = not yet / couldn't be measured. */
   overlap?: number;
@@ -80,18 +81,20 @@ function hasColumn(t: TableInfo | undefined, col: string): boolean {
  * curated + inferred relationships, filtered to tables/columns that actually exist and
  * de-duplicated (curated wins over inferred for the same table pair + columns).
  */
-export function buildSchemaGraph(catalog: Catalog): SchemaGraph {
+export function buildSchemaGraph(catalog: Catalog, userEdges: Relationship[] = []): SchemaGraph {
   const present = new Set(catalog.tables.map((t) => t.name));
   const byName = new Map(catalog.tables.map((t) => [t.name, t]));
-  const all: Relationship[] = [...CURATED_RELATIONSHIPS, ...inferRelationships(catalog.tables)];
+  // Priority order: user-declared > curated > inferred. The first edge seen for a key wins.
+  const all: Relationship[] = [...userEdges, ...CURATED_RELATIONSHIPS, ...inferRelationships(catalog.tables)];
 
   const seen = new Map<string, GraphEdge>();
   for (const r of all) {
     if (!present.has(r.from.table) || !present.has(r.to.table) || r.from.table === r.to.table) continue;
-    // Require the columns to really exist on both sides (defends against stale curation).
+    // Require the columns to really exist on both sides (defends against stale curation / typos).
     if (!hasColumn(byName.get(r.from.table), r.from.column) || !hasColumn(byName.get(r.to.table), r.to.column)) continue;
     const k = edgeKey(r.from.table, r.from.column, r.to.table, r.to.column);
-    if (seen.get(k)?.source === "curated") continue; // curated wins over a duplicate inferred edge
+    const existing = seen.get(k);
+    if (existing && (existing.source === "user" || existing.source === "curated")) continue; // authoritative wins
     seen.set(k, {
       a: r.from.table, b: r.to.table, aCol: r.from.column, bCol: r.to.column,
       label: r.label, source: r.source ?? "curated",
@@ -138,11 +141,11 @@ const edgeSig = (e: GraphEdge) => `${e.a}.${e.aCol}~${e.b}.${e.bCol}`;
  * because ClickHouse fills unmatched LEFT-JOIN cells with type defaults (not NULL), which
  * would make every edge look like a 100% match.
  */
-async function probeOverlap(e: GraphEdge): Promise<number | null> {
+export async function measureOverlap(a: string, aCol: string, b: string, bCol: string): Promise<number | null> {
   const sql =
     `SELECT count() AS sampled, ` +
-    `countIf(toString(k) IN (SELECT toString(\`${e.bCol}\`) FROM \`${e.b}\` WHERE \`${e.bCol}\` IS NOT NULL)) AS matched ` +
-    `FROM (SELECT DISTINCT \`${e.aCol}\` AS k FROM \`${e.a}\` WHERE \`${e.aCol}\` IS NOT NULL LIMIT ${SAMPLE})`;
+    `countIf(toString(k) IN (SELECT toString(\`${bCol}\`) FROM \`${b}\` WHERE \`${bCol}\` IS NOT NULL)) AS matched ` +
+    `FROM (SELECT DISTINCT \`${aCol}\` AS k FROM \`${a}\` WHERE \`${aCol}\` IS NOT NULL LIMIT ${SAMPLE})`;
   try {
     const r = await runSelect(sql, { settings: { max_execution_time: 12 } });
     const row = r.rows[0] ?? {};
@@ -153,6 +156,8 @@ async function probeOverlap(e: GraphEdge): Promise<number | null> {
     return null; // fail open
   }
 }
+
+const probeOverlap = (e: GraphEdge) => measureOverlap(e.a, e.aCol, e.b, e.bCol);
 
 /** Cached overlap lookup: re-probe only edges we haven't measured within the TTL. */
 async function overlapFor(e: GraphEdge): Promise<number | null> {
@@ -186,11 +191,12 @@ async function verifyEdges(graph: SchemaGraph): Promise<void> {
   await Promise.all(Array.from({ length: Math.min(VERIFY_CONCURRENCY, edges.length) }, worker));
 
   // Retain the confirmed phantoms (exactly 0% overlap) for persistence/diagnostics before
-  // they're dropped from the traversable graph below.
-  graph.droppedEdges = edges.filter((e) => e.overlap === 0);
+  // they're dropped from the traversable graph below. User-declared edges are never dropped
+  // (the user asserted the relationship) — their overlap is still measured and shown.
+  graph.droppedEdges = edges.filter((e) => e.overlap === 0 && e.source !== "user");
 
-  // Drop confirmed phantoms (measured exactly 0% overlap); keep partial + un-judged edges.
-  const kept = edges.filter((e) => e.overlap === undefined || e.overlap > 0);
+  // Drop confirmed phantoms (measured exactly 0% overlap); keep partial, un-judged + user edges.
+  const kept = edges.filter((e) => e.source === "user" || e.overlap === undefined || e.overlap > 0);
   if (kept.length !== edges.length) {
     graph.edges = kept;
     for (const list of graph.adj.values()) list.length = 0;
@@ -208,10 +214,17 @@ let _graphCatalogAt = 0;
 let _building: Promise<SchemaGraph> | null = null;
 let _buildingForAt = 0;
 
+/** Force the next getSchemaGraph() to rebuild — call after user edges change (the catalog
+ *  timestamp is unchanged, so the cache wouldn't otherwise notice). */
+export function invalidateSchemaGraph(): void {
+  _graph = null;
+  _graphCatalogAt = 0;
+}
+
 /**
  * The schema graph, rebuilt only when the underlying catalog changes: build the structure
- * (instant), then verify its edges against the live data. Concurrent callers for the same
- * catalog share one in-flight build.
+ * (instant) from the curated/inferred/user edges, then verify its edges against the live
+ * data. Concurrent callers for the same catalog share one in-flight build.
  */
 export async function getSchemaGraph(): Promise<SchemaGraph> {
   const cat = await getCatalog();
@@ -220,7 +233,8 @@ export async function getSchemaGraph(): Promise<SchemaGraph> {
 
   _buildingForAt = cat.discoveredAt;
   _building = (async () => {
-    const g = buildSchemaGraph(cat);
+    const userEdges = await loadUserEdges();
+    const g = buildSchemaGraph(cat, userEdges);
     try {
       await verifyEdges(g);
     } catch {

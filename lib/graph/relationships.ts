@@ -24,8 +24,8 @@ export interface Relationship {
   to: { table: string; column: string };
   /** Human label for the relationship (shown to the LLM and in the UI). */
   label: string;
-  /** "curated" edges are authoritative; "inferred" come from column-name matching. */
-  source?: "curated" | "inferred";
+  /** "curated" + "user" edges are authoritative; "inferred" come from column-name matching. */
+  source?: "curated" | "inferred" | "user";
 }
 
 /**

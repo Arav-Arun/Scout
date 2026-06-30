@@ -100,6 +100,12 @@ export default function GraphModal({ open, onClose }: { open: boolean; onClose: 
               : "Loading…"}
           </div>
         </div>
+        <a
+          href="/graph"
+          className="ml-auto shrink-0 rounded-xl border border-line px-3 py-1.5 text-[12.5px] font-semibold text-ink-soft transition-colors hover:bg-black/5 hover:text-ink dark:hover:bg-white/10"
+        >
+          Graph Lab →
+        </a>
       </div>
 
       {/* body — graph on the left, legend panel on the right */}

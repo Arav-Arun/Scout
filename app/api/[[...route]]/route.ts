@@ -1,10 +1,13 @@
 import { NextRequest } from "next/server";
 import { runScoutWorkflow } from "@/lib/agent/workflow";
 import { ingestFile } from "@/lib/db/ingest";
-import { invalidateCatalog } from "@/lib/db/catalog";
+import { invalidateCatalog, getCatalog } from "@/lib/db/catalog";
 import { dbName } from "@/lib/db/clickhouse";
-import { getSchemaGraph } from "@/lib/graph/schema-graph";
+import {
+  getSchemaGraph, invalidateSchemaGraph, retrieveSubgraph, formatGraphForPrompt, measureOverlap,
+} from "@/lib/graph/schema-graph";
 import { persistSchemaGraph } from "@/lib/graph/persist";
+import { addUserEdge, removeUserEdge } from "@/lib/graph/user-edges";
 import { tableDomain } from "@/lib/graph/relationships";
 import type { ChatTurn, ScoutEvent } from "@/lib/types";
 
@@ -43,13 +46,20 @@ export async function GET(
         id,
         rowCount: n.rowCount,
         cols: n.columns.length,
+        columns: n.columns, // exposed so the Graph Lab's add-edge form can populate column pickers
         domain: tableDomain(id),
       }));
+      const statusOf = (overlap?: number, verified?: boolean) =>
+        overlap === undefined ? "unjudged" : verified ? "verified" : "partial";
       const edges = g.edges.map((e) => ({
         a: e.a, b: e.b, aCol: e.aCol, bCol: e.bCol, label: e.label, source: e.source,
-        overlap: e.overlap, verified: e.verified,
+        overlap: e.overlap, verified: e.verified, status: statusOf(e.overlap, e.verified),
       }));
-      return Response.json({ nodes, edges });
+      const dropped = (g.droppedEdges ?? []).map((e) => ({
+        a: e.a, b: e.b, aCol: e.aCol, bCol: e.bCol, label: e.label, source: e.source,
+        overlap: e.overlap, verified: false, status: "dropped",
+      }));
+      return Response.json({ nodes, edges, dropped });
     } catch (e) {
       return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
     }
@@ -135,6 +145,84 @@ export async function POST(
         { error: e instanceof Error ? e.message : String(e) },
         { status: 500 },
       );
+    }
+  }
+
+  // Graph Lab actions (inspect/test page). Dispatch on the second path segment.
+  if (path === "graph") {
+    const sub = route?.[1];
+    let body: Record<string, unknown> = {};
+    try {
+      body = await request.json();
+    } catch {
+      /* probe/retrieve may post an empty body; treat as {} */
+    }
+    try {
+      // Live value-overlap probe for an arbitrary column pair — the exact check the agent runs.
+      if (sub === "probe") {
+        const { a, aCol, b, bCol } = body as Record<string, string>;
+        if (!a || !aCol || !b || !bCol) {
+          return Response.json({ error: "a, aCol, b, bCol are required" }, { status: 400 });
+        }
+        const overlap = await measureOverlap(a, aCol, b, bCol);
+        return Response.json({ overlap }); // 0..1, or null if not measurable
+      }
+
+      // Test retrieval: what subgraph + JOIN GRAPH prompt the agent would build from these seeds.
+      if (sub === "retrieve") {
+        const seeds = Array.isArray(body.seeds) ? (body.seeds as string[]) : [];
+        const g = await getSchemaGraph();
+        const subg = retrieveSubgraph(g, seeds, { maxTables: 8 });
+        return Response.json({
+          seeds: subg.seeds,
+          tables: subg.tables,
+          edges: subg.edges.map((e) => ({
+            a: e.a, b: e.b, aCol: e.aCol, bCol: e.bCol, label: e.label,
+            source: e.source, overlap: e.overlap, verified: e.verified,
+          })),
+          prompt: formatGraphForPrompt(subg),
+        });
+      }
+
+      // Add / remove a user-declared edge (a relationship that isn't a foreign key).
+      if (sub === "edge") {
+        const { a, aCol, b, bCol, label, remove } = body as Record<string, string | boolean>;
+        if (!a || !aCol || !b || !bCol) {
+          return Response.json({ error: "a, aCol, b, bCol are required" }, { status: 400 });
+        }
+        const edge = { a: String(a), aCol: String(aCol), b: String(b), bCol: String(bCol) };
+
+        if (remove) {
+          await removeUserEdge(edge);
+          invalidateSchemaGraph();
+          return Response.json({ ok: true });
+        }
+
+        // Validate both columns really exist before persisting, so the graph stays clean.
+        const cat = await getCatalog();
+        const colsOf = (t: string) => cat.tables.find((x) => x.name === t)?.columns.map((c) => c.name);
+        const aCols = colsOf(edge.a), bCols = colsOf(edge.b);
+        if (!aCols) return Response.json({ error: `Unknown table: ${edge.a}` }, { status: 400 });
+        if (!bCols) return Response.json({ error: `Unknown table: ${edge.b}` }, { status: 400 });
+        if (!aCols.includes(edge.aCol)) return Response.json({ error: `${edge.a} has no column ${edge.aCol}` }, { status: 400 });
+        if (!bCols.includes(edge.bCol)) return Response.json({ error: `${edge.b} has no column ${edge.bCol}` }, { status: 400 });
+        if (edge.a === edge.b) return Response.json({ error: "An edge must connect two different tables" }, { status: 400 });
+
+        await addUserEdge({ ...edge, label: typeof label === "string" ? label : undefined });
+        invalidateSchemaGraph();
+        const overlap = await measureOverlap(edge.a, edge.aCol, edge.b, edge.bCol); // immediate feedback
+        // Re-snapshot so the persisted graph reflects the new edge. Best-effort.
+        try {
+          await persistSchemaGraph(await getSchemaGraph());
+        } catch {
+          /* snapshot refresh failed; the in-memory graph already has the edge */
+        }
+        return Response.json({ ok: true, overlap });
+      }
+
+      return new Response("Not Found", { status: 404 });
+    } catch (e) {
+      return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
     }
   }
 
