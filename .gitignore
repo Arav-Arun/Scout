@@ -44,6 +44,9 @@ yarn-error.log*
 # local dev, seeding & test scripts — kept out of the public repo entirely
 /scripts/
 
+# internal Graph RAG demo (standalone Streamlit prototype) — internal test tool, not showcase app code
+/graph_rag_demo/
+
 # internal docs / notes — only README.md is tracked on the public repo
 *.md
 !README.md

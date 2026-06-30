@@ -45,6 +45,10 @@ export interface SchemaGraph {
   /** table -> edges incident to it (adjacency list). */
   adj: Map<string, GraphEdge[]>;
   edges: GraphEdge[];
+  /** Edges VERIFY measured at exactly 0% overlap and dropped from `edges` (confirmed
+   *  phantoms). Retained here only so persistence/diagnostics can show what was dropped;
+   *  the agent never traverses these. Populated by verifyEdges(). */
+  droppedEdges?: GraphEdge[];
   builtAt: number;
 }
 
@@ -180,6 +184,10 @@ async function verifyEdges(graph: SchemaGraph): Promise<void> {
     }
   };
   await Promise.all(Array.from({ length: Math.min(VERIFY_CONCURRENCY, edges.length) }, worker));
+
+  // Retain the confirmed phantoms (exactly 0% overlap) for persistence/diagnostics before
+  // they're dropped from the traversable graph below.
+  graph.droppedEdges = edges.filter((e) => e.overlap === 0);
 
   // Drop confirmed phantoms (measured exactly 0% overlap); keep partial + un-judged edges.
   const kept = edges.filter((e) => e.overlap === undefined || e.overlap > 0);

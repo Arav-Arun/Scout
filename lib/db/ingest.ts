@@ -1,10 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // CLICKHOUSE INGESTION  ·  lib/db/ingest.ts
 //
-// The ONE write path in Scout: the analytics agent is read-only
-// (lib/db/clickhouse.ts), but ingesting an uploaded file needs CREATE TABLE +
-// INSERT. The read-only client can't do that, so the write/DDL statements go
-// directly over ClickHouse's HTTP interface via chExec() (defined below).
+// A write path in Scout: the analytics agent is read-only (lib/db/clickhouse.ts),
+// but ingesting an uploaded file needs CREATE TABLE + INSERT. The read-only client
+// can't do that, so the write/DDL statements go directly over ClickHouse's HTTP
+// interface via chExec() (shared transport in lib/db/write.ts).
 //
 // File parsing lives in lib/db/parsers.ts; this module handles only the
 // ClickHouse-specific ingestion: table naming, dedup, DDL, and bulk insert.
@@ -12,43 +12,10 @@
 
 import { createHash } from "node:crypto";
 import { runSelect, describeTable } from "./clickhouse";
+import { chExec } from "./write";
 import { parseDelimited, parseJson, parseXlsx, inferSchema, type InferredColumn } from "./parsers";
 
 export type { InferredColumn };
-
-// ── Write transport ──────────────────────────────────────────────────────────
-// The analytics client (lib/db/clickhouse.ts) is pinned read-only, so the write
-// path talks to ClickHouse directly over its HTTP interface.
-
-function chBase(): { url: string; auth: string } {
-  const url = process.env.CLICKHOUSE_HOST;
-  if (!url) throw new Error("CLICKHOUSE_HOST is not set");
-  const user = process.env.CLICKHOUSE_USER || "default";
-  const pass = process.env.CLICKHOUSE_PASSWORD || "";
-  return { url: url.replace(/\/$/, ""), auth: "Basic " + Buffer.from(`${user}:${pass}`).toString("base64") };
-}
-
-/** Run a write/DDL statement against ClickHouse over HTTP. */
-async function chExec(
-  query: string,
-  body?: string,
-  settings?: Record<string, string>,
-): Promise<void> {
-  const { url, auth } = chBase();
-  const params = new URLSearchParams();
-  if (body) params.set("query", query);
-  for (const [k, v] of Object.entries(settings ?? {})) params.set(k, v);
-  const qs = params.toString() ? `?${params.toString()}` : "";
-  const res = await fetch(url + "/" + qs, {
-    method: "POST",
-    headers: { Authorization: auth, "Content-Type": "text/plain" },
-    body: body ?? query,
-  });
-  if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`ClickHouse error (${res.status}): ${txt.slice(0, 400)}`);
-  }
-}
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
 
