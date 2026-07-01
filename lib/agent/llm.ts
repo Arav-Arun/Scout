@@ -1,13 +1,5 @@
 // LLM client (lib/agent/llm.ts) — thin wrapper over the OpenAI SDK exposing one reusable
 // llmJSON() call that returns parsed JSON, with a defensive brace-extraction fallback.
-//
-// ROOT CAUSE of the "Premature close" synthesis failures: the OpenAI SDK (node-fetch path) pools
-// keep-alive TLS sockets to api.openai.com. Synthesis is the only phase that runs *after* the
-// ClickHouse query phase, so its pooled socket sits idle for seconds while queries run; the remote
-// (or a proxy in a deployed container) drops that idle socket, and the large synthesis request sent
-// over the now-dead socket fails with "Premature close". Plan/analyze don't hit it — no long idle
-// gap, smaller bodies. The fix is `keepAlive: false`: a fresh connection per request, so no pooled
-// socket can ever go stale. Streaming + a transient-drop retry remain as belt-and-suspenders.
 
 import OpenAI from "openai";
 import { Agent } from "node:https";
