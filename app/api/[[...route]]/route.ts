@@ -1,18 +1,16 @@
 // route.ts — the app's API surface (catch-all). GET: db-info, graph (the recovered graph
-// for the viewer). POST: chat (streamed agent run), upload (ingest a file), and the Graph
-// Lab actions graph/probe, graph/retrieve, graph/edge.
+// for the viewer). POST: chat (streamed agent run) and the Graph Lab actions graph/probe,
+// graph/retrieve, graph/edge.
 
 import { NextRequest } from "next/server";
 import { runScoutWorkflow } from "@/lib/agent/workflow";
-import { ingestFile } from "@/lib/db/ingest";
-import { invalidateCatalog, getCatalog } from "@/lib/db/catalog";
+import { getCatalog } from "@/lib/db/catalog";
 import { dbName } from "@/lib/db/clickhouse";
 import {
-  getSchemaGraph, invalidateSchemaGraph, retrieveSubgraph, formatGraphForPrompt, measureOverlap,
+  getSchemaGraph, materializeSchemaGraph, retrieveSubgraph, formatGraphForPrompt, measureOverlap,
 } from "@/lib/graph/schema-graph";
-import { persistSchemaGraph } from "@/lib/graph/persist";
 import { addUserEdge, removeUserEdge, editUserEdge } from "@/lib/graph/user-edges";
-import { tableDomain } from "@/lib/graph/relationships";
+import { tableDomain, connectionOf } from "@/lib/graph/relationships";
 import type { ChatTurn, ScoutEvent } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -56,11 +54,13 @@ export async function GET(
       const statusOf = (overlap?: number, verified?: boolean) =>
         overlap === undefined ? "unjudged" : verified ? "verified" : "partial";
       const edges = g.edges.map((e) => ({
-        a: e.a, b: e.b, aCol: e.aCol, bCol: e.bCol, label: e.label, source: e.source,
+        a: e.a, b: e.b, aCol: e.aCol, bCol: e.bCol, label: e.label,
+        source: e.source, connection: connectionOf(e.source),
         overlap: e.overlap, verified: e.verified, status: statusOf(e.overlap, e.verified),
       }));
       const dropped = (g.droppedEdges ?? []).map((e) => ({
-        a: e.a, b: e.b, aCol: e.aCol, bCol: e.bCol, label: e.label, source: e.source,
+        a: e.a, b: e.b, aCol: e.aCol, bCol: e.bCol, label: e.label,
+        source: e.source, connection: connectionOf(e.source),
         overlap: e.overlap, verified: false, status: "dropped",
       }));
       return Response.json({ nodes, edges, dropped });
@@ -116,42 +116,6 @@ export async function POST(
     });
   }
 
-  if (path === "upload") {
-    try {
-      const form = await request.formData();
-      const file = form.get("file");
-      if (!(file instanceof File)) {
-        return Response.json({ error: "No file provided" }, { status: 400 });
-      }
-
-      const buf = Buffer.from(await file.arrayBuffer());
-      const result = await ingestFile(file.name, buf);
-
-      // The warehouse changed - drop the cached catalog so the next question sees it.
-      invalidateCatalog();
-
-      // Re-snapshot the schema graph so scout_schema_graph_edges/nodes reflect the new table.
-      // Best-effort: a write failure here must not fail the upload itself.
-      try {
-        await persistSchemaGraph(await getSchemaGraph());
-      } catch {
-        // snapshot refresh failed; the in-memory graph is still correct for the next question.
-      }
-
-      return Response.json({
-        table: result.table,
-        rowCount: result.rowCount,
-        columns: result.columns.map((c) => ({ name: c.name, type: c.type })),
-        alreadyExists: !!result.alreadyExists,
-      });
-    } catch (e) {
-      return Response.json(
-        { error: e instanceof Error ? e.message : String(e) },
-        { status: 500 },
-      );
-    }
-  }
-
   // Graph Lab actions (inspect/test page). Dispatch on the second path segment.
   if (path === "graph") {
     const sub = route?.[1];
@@ -198,12 +162,11 @@ export async function POST(
 
         if (remove) {
           await removeUserEdge(edge);
-          invalidateSchemaGraph();
-          // Re-snapshot so the persisted graph reflects the deletion too. Best-effort.
+          // Re-materialize the canonical graph so it reflects the deletion. Best-effort.
           try {
-            await persistSchemaGraph(await getSchemaGraph());
+            await materializeSchemaGraph();
           } catch {
-            /* snapshot refresh failed; the in-memory graph already reflects the deletion */
+            /* re-materialization failed; the stored graph still has the old edge until next trigger */
           }
           return Response.json({ ok: true });
         }
@@ -226,13 +189,12 @@ export async function POST(
         } else {
           await addUserEdge(withLabel);
         }
-        invalidateSchemaGraph();
         const measure = await measureOverlap(edge.a, edge.aCol, edge.b, edge.bCol); // immediate feedback
-        // Re-snapshot so the persisted graph reflects the change. Best-effort.
+        // Re-materialize the canonical graph so it reflects the add/edit. Best-effort.
         try {
-          await persistSchemaGraph(await getSchemaGraph());
+          await materializeSchemaGraph();
         } catch {
-          /* snapshot refresh failed; the in-memory graph already has the change */
+          /* re-materialization failed; the change is in scout_user_edges and lands on next trigger */
         }
         return Response.json({ ok: true, measure });
       }

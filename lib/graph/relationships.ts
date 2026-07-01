@@ -1,10 +1,11 @@
-// relationships.ts — the candidate join edges for the schema graph, recovered without any
-// foreign-key metadata:
-//   1. CURATED — an authoritative manifest, including aliased keys a column-name match
-//      misses (e.g. collections.assigned_employee_id → employees.employee_id).
-//   2. INFERRED — any key-like column (*_id or a known join column) shared between a table
-//      and its canonical parent becomes an edge; keeps the graph correct as tables change.
-// buildSchemaGraph() (schema-graph.ts) merges both, curated winning on conflict.
+// relationships.ts — the join edges for the schema graph, recovered without any foreign-key
+// metadata. Two kinds:
+//   1. INFERRED (physical) — any key-like column (*_id or a known join column) shared between
+//      a table and its canonical parent becomes an edge; recomputed from the live catalog.
+//   2. MANUAL — human-declared edges managed in the Graph Lab (stored in scout_user_edges),
+//      including aliased keys inference can't see (e.g. collections.assigned_employee_id →
+//      employees.employee_id). Add/edit/delete from the UI.
+// buildSchemaGraph() (schema-graph.ts) merges both, the manual (declared) edge winning on conflict.
 
 import type { TableInfo } from "../db/clickhouse";
 
@@ -14,10 +15,27 @@ export interface Relationship {
   to: { table: string; column: string };
   /** Human label for the relationship (shown to the LLM and in the UI). */
   label: string;
-  /** "declared" edges are human-asserted and authoritative (the curated seed + user edits,
-   *  all editable from the Graph Lab); "inferred" come from column-name matching. */
+  /** "declared" edges are human-asserted and authoritative (added/edited in the Graph Lab,
+   *  stored in scout_user_edges); "inferred" come from column-name matching. */
   source?: "declared" | "inferred";
 }
+
+/**
+ * The connection "kind" the graph surfaces to the reader: a **physical** connection is
+ * recovered automatically from the schema/data structure (an inferred key), a **manual**
+ * connection was declared by a human in the Graph Lab (i.e. "declared", stored in
+ * scout_user_edges). This one helper is the single mapping from the internal `source` field
+ * to that vocabulary, so storage, the API and the UI all agree.
+ */
+export type Connection = "physical" | "manual";
+export function connectionOf(source: "declared" | "inferred" | undefined): Connection {
+  return source === "inferred" ? "physical" : "manual";
+}
+
+/** Scout's own bookkeeping tables (the graph store + editable-edges store). They live in the
+ *  same database as the warehouse but are not analytics tables, so the schema graph excludes
+ *  them from its nodes — they'd otherwise show up as isolated, meaningless dots. */
+export const isMetaTable = (name: string): boolean => name.startsWith("scout_");
 
 /**
  * Columns that act as **hubs**: they live in many tables and point at one dimension
@@ -50,70 +68,6 @@ export const PARENT_OF_COLUMN: Record<string, string> = {
   city: "geographies",
 };
 
-// child[table.column] -> parent.column.  Curated, authoritative edges.
-const C = (table: string, column: string, toTable: string, toColumn: string, label: string): Relationship => ({
-  from: { table, column }, to: { table: toTable, column: toColumn }, label, source: "declared",
-});
-
-/** The curated manifest, including the aliased keys inference can't see. This is the SEED for
- *  the editable declared-edges store (scout_user_edges): user-edges.ts loads it in once, after
- *  which every edge is editable/deletable from the Graph Lab. */
-export const CURATED_RELATIONSHIPS: Relationship[] = [
-  // ── customer_id -> customers (the central hub) ───────────────────────────────
-  ...["accounts", "cards", "card_applications", "account_transactions", "loan_applications",
-    "loan_repayments", "collections", "credit_bureau", "disputes", "fraud_alerts", "kyc_records",
-    "aml_screenings", "rewards_ledger", "reward_redemptions", "offer_redemptions", "campaign_responses",
-    "support_tickets", "app_sessions", "statements", "devices", "loan_book", "card_transactions"].map(
-    (t) => C(t, "customer_id", "customers", "customer_id", "belongs to customer"),
-  ),
-  // ── account / card / loan / txn parents ──────────────────────────────────────
-  C("cards", "account_id", "accounts", "account_id", "drawn on account"),
-  C("account_transactions", "account_id", "accounts", "account_id", "on account"),
-  C("statements", "account_id", "accounts", "account_id", "for account"),
-  C("disputes", "card_id", "cards", "card_id", "on card"),
-  C("rewards_ledger", "card_id", "cards", "card_id", "earned on card"),
-  C("statements", "card_id", "cards", "card_id", "for card"),
-  C("loan_repayments", "loan_id", "loan_book", "loan_id", "repays loan"),
-  C("collections", "loan_id", "loan_book", "loan_id", "collects on loan"),
-  C("disputes", "txn_id", "card_transactions", "txn_id", "disputes transaction"),
-  C("fraud_alerts", "txn_id", "card_transactions", "txn_id", "flags transaction"),
-  C("rewards_ledger", "txn_id", "card_transactions", "txn_id", "earned on transaction"),
-  C("offer_redemptions", "txn_id", "card_transactions", "txn_id", "applied to transaction"),
-  // ── branches / employees (note the aliased employee columns) ─────────────────
-  C("employees", "branch_id", "branches", "branch_id", "works at branch"),
-  C("accounts", "branch_id", "branches", "branch_id", "opened at branch"),
-  C("card_applications", "branch_id", "branches", "branch_id", "applied at branch"),
-  C("loan_applications", "branch_id", "branches", "branch_id", "applied at branch"),
-  C("loan_book", "branch", "branches", "branch_id", "disbursed at branch"),
-  C("branches", "manager_employee_id", "employees", "employee_id", "managed by"),
-  C("employees", "manager_id", "employees", "employee_id", "reports to"),
-  C("collections", "assigned_employee_id", "employees", "employee_id", "assigned to"),
-  C("support_tickets", "assigned_employee_id", "employees", "employee_id", "handled by"),
-  C("aml_screenings", "reviewer_employee_id", "employees", "employee_id", "reviewed by"),
-  C("kyc_records", "verified_by_employee_id", "employees", "employee_id", "verified by"),
-  // ── products / offers / campaigns ────────────────────────────────────────────
-  C("cards", "card_product_id", "card_products", "card_product_id", "is product"),
-  C("card_applications", "card_product_id", "card_products", "card_product_id", "applied for product"),
-  C("offers", "card_product_id", "card_products", "card_product_id", "for card product"),
-  C("loan_applications", "loan_product_id", "loan_products", "loan_product_id", "applied for product"),
-  C("loan_book", "product", "loan_products", "product", "is product"),
-  C("offer_redemptions", "offer_id", "offers", "offer_id", "redeems offer"),
-  C("campaign_responses", "campaign_id", "marketing_campaigns", "campaign_id", "responds to campaign"),
-  // ── merchants / categories ───────────────────────────────────────────────────
-  C("card_transactions", "merchant", "merchants", "merchant_name", "at merchant"),
-  C("merchants", "merchant_category", "merchant_categories", "merchant_category", "in category"),
-  C("card_transactions", "merchant_category", "merchant_categories", "merchant_category", "in category"),
-  C("offers", "merchant_category", "merchant_categories", "merchant_category", "targets category"),
-  C("merchants", "mcc_code", "merchant_categories", "mcc_code", "MCC"),
-  // ── devices ──────────────────────────────────────────────────────────────────
-  C("fraud_alerts", "device_id", "devices", "device_id", "from device"),
-  C("app_sessions", "device_id", "devices", "device_id", "on device"),
-  // ── geography (hub on city) ──────────────────────────────────────────────────
-  ...["customers", "branches", "merchants", "employees", "card_transactions"].map(
-    (t) => C(t, "city", "geographies", "city", "located in"),
-  ),
-];
-
 /**
  * Sub-domain ("community") each table belongs to - used to colour the knowledge-graph
  * view and to group related tables. A lightweight, declared alternative to running
@@ -136,15 +90,15 @@ export const TABLE_DOMAIN: Record<string, string> = {
   marketing_campaigns: "Engagement", campaign_responses: "Engagement",
 };
 
-/** The sub-domain for a table (defaults to "Retail / other" for the legacy retail tables). */
+/** The sub-domain for a table (defaults to "Other" for tables without an assigned sub-domain). */
 export function tableDomain(name: string): string {
-  return TABLE_DOMAIN[name] ?? "Retail / other";
+  return TABLE_DOMAIN[name] ?? "Other";
 }
 
 /**
  * Recover join edges purely from the catalog, with no FK metadata: every key-like
  * column that exists both in a table and in its canonical parent table becomes an
- * edge. Used as a fallback/augmentation alongside the curated manifest.
+ * edge (the "physical" connections). Merged with the manual edges in buildSchemaGraph().
  */
 export function inferRelationships(tables: TableInfo[]): Relationship[] {
   const present = new Set(tables.map((t) => t.name));

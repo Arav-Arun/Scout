@@ -1,6 +1,6 @@
 // useScoutAgent — owns the client-side agent state: conversation turns, dashboard
-// versions, streaming, and file upload. Consumes POST /api/chat and POST /api/upload,
-// reading an NDJSON stream of ScoutEvent (lib/types.ts).
+// versions, and streaming. Consumes POST /api/chat, reading an NDJSON stream of
+// ScoutEvent (lib/types.ts).
 
 "use client";
 
@@ -15,15 +15,7 @@ export interface ScoutAgent {
   isRunning: boolean;
   setActiveVersion: (i: number) => void;
   send: (text: string) => void;
-  uploadFile: (file: File) => void;
   clearChat: () => void;
-}
-
-/** Human-readable byte size for the ingest progress chip. */
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export function useScoutAgent(): ScoutAgent {
@@ -179,87 +171,6 @@ export function useScoutAgent(): ScoutAgent {
     [isRunning, patchAssistant],
   );
 
-  // Upload a file, then auto-ask the agent to profile the new table.
-  const uploadFile = useCallback(
-    async (file: File) => {
-      if (isRunning) return;
-      setIsRunning(true);
-      const uploadStepId = `up_${Date.now()}`;
-      const startedAt = Date.now();
-      const sizeLabel = formatBytes(file.size);
-
-      setTurns((t) => [
-        ...t,
-        { role: "user", text: `📎 ${file.name}` },
-        {
-          role: "assistant",
-          blocks: [
-            { type: "step", id: uploadStepId, kind: "discover", status: "running", label: `Ingesting ${file.name}`, detail: `${sizeLabel} · 0s` },
-          ],
-        },
-      ]);
-
-      // Merge a partial update into the upload step block (status/label/detail).
-      const updateStep = (patch: Partial<Extract<AgentBlock, { type: "step" }>>) => {
-        setTurns((t) => {
-          const copy = [...t];
-          const last = copy[copy.length - 1];
-          if (!last || last.role !== "assistant") return t;
-          const blocks = (last.blocks ?? []).map((b) =>
-            b.type === "step" && b.id === uploadStepId ? { ...b, ...patch } : b,
-          );
-          copy[copy.length - 1] = { ...last, blocks };
-          return copy;
-        });
-      };
-
-      // Tick a live elapsed timer so a long ingest never looks frozen.
-      const timer = setInterval(
-        () => updateStep({ detail: `${sizeLabel} · ${Math.round((Date.now() - startedAt) / 1000)}s` }),
-        1000,
-      );
-      // Fail fast: abort a hung request (e.g. the dev server died) instead of spinning forever.
-      const controller = new AbortController();
-      const UPLOAD_TIMEOUT_MS = 120_000;
-      const timeout = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
-
-      try {
-        const fd = new FormData();
-        fd.append("file", file);
-        const res = await fetch("/api/upload", { method: "POST", body: fd, signal: controller.signal });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Upload failed");
-        const detail = `${data.table} · ${Number(data.rowCount).toLocaleString()} rows`;
-        updateStep({ status: "done", label: data.alreadyExists ? "Using existing table (skipped upload)" : "Ingested into ClickHouse", detail });
-        setIsRunning(false);
-        send(
-          `Analyse the newly uploaded table \`${data.table}\` (from the file "${file.name}", ${data.rowCount} rows). Profile it and summarise the key findings with charts.`,
-        );
-      } catch (e) {
-        const msg = controller.signal.aborted
-          ? `No response after ${UPLOAD_TIMEOUT_MS / 1000}s — is the dev server running?`
-          : e instanceof Error ? e.message : String(e);
-        updateStep({ status: "error", label: controller.signal.aborted ? "Ingestion timed out" : "Ingestion failed", detail: msg });
-        setTurns((t) => {
-          const copy = [...t];
-          const last = copy[copy.length - 1];
-          if (last?.role === "assistant") {
-            copy[copy.length - 1] = {
-              ...last,
-              blocks: [...(last.blocks ?? []), { type: "text", text: `⚠️ ${msg}` }],
-            };
-          }
-          return copy;
-        });
-        setIsRunning(false);
-      } finally {
-        clearInterval(timer);
-        clearTimeout(timeout);
-      }
-    },
-    [isRunning, send],
-  );
-
   return {
     turns,
     versions,
@@ -267,7 +178,6 @@ export function useScoutAgent(): ScoutAgent {
     isRunning,
     setActiveVersion,
     send,
-    uploadFile,
     clearChat,
   };
 }

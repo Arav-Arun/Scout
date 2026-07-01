@@ -1,9 +1,8 @@
 "use client";
 
 // ChatPanel (left pane) — the conversation surface: composer, transcript, live
-// reasoning-step chips, file upload, and settings. Mounted by app/page.tsx, which
-// owns the state and the onSend/onUpload callbacks. Reads GET /api/db-info for the
-// warehouse connection banner.
+// reasoning-step chips, and settings. Mounted by app/page.tsx, which owns the state
+// and the onSend callback. Reads GET /api/db-info for the warehouse connection banner.
 
 import { useEffect, useRef, useState } from "react";
 import type { UITurn, AgentBlock } from "@/lib/types";
@@ -11,7 +10,6 @@ import {
   SendIcon,
   SparkIcon,
   PanelLeftIcon,
-  PaperclipIcon,
   GearIcon,
   MoonIcon,
   SunIcon,
@@ -47,7 +45,6 @@ export default function ChatPanel({
   turns,
   isRunning,
   onSend,
-  onUpload,
   onToggleCollapse,
   activeVersion,
   onSelectVersion,
@@ -59,7 +56,6 @@ export default function ChatPanel({
   turns: UITurn[];
   isRunning: boolean;
   onSend: (text: string) => void;
-  onUpload: (file: File) => void;
   onToggleCollapse: () => void;
   activeVersion: number;
   onSelectVersion: (i: number) => void;
@@ -72,7 +68,6 @@ export default function ChatPanel({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [dbInfo, setDbInfo] = useState<{ host: string; database: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -111,23 +106,10 @@ export default function ChatPanel({
     onSend(t);
   };
 
-  const pickFile = () => fileRef.current?.click();
   const empty = turns.length === 0;
 
   return (
     <div className="glass flex h-full flex-col md:rounded-3xl md:shadow-lg overflow-hidden">
-      <input
-        ref={fileRef}
-        type="file"
-        accept=".csv,.tsv,.xlsx,.xls,.json,.jsonl,.ndjson"
-        className="hidden"
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) onUpload(f);
-          e.target.value = "";
-        }}
-      />
-
       {/* header */}
       <div className={`p-3 md:p-3.5 pb-1 shrink-0 ${settingsOpen ? "relative z-40" : "relative z-10"}`}>
         <div className="glass-chrome flex h-14 items-center gap-2.5 rounded-2xl border border-line px-4 shadow-sm relative">
@@ -233,7 +215,7 @@ export default function ChatPanel({
 
       {/* transcript */}
       <div ref={scrollRef} className="flex-1 space-y-5 overflow-y-auto px-5 py-5">
-        {empty && <EmptyState onPick={onSend} onUploadClick={pickFile} />}
+        {empty && <EmptyState onPick={onSend} />}
 
         {turns.map((turn, i) =>
           turn.role === "user" ? (
@@ -272,14 +254,6 @@ export default function ChatPanel({
       {/* composer */}
       <div className="p-3 md:p-3.5 pt-1 shrink-0">
         <div className="glass-chrome flex items-end gap-1.5 rounded-2xl px-3 py-2 md:gap-2.5 md:px-4 md:py-2.5 transition-all focus-within:border-brand focus-within:ring-4 focus-within:ring-brand/20 dark:focus-within:ring-brand/35 shadow-sm border border-line">
-          <button
-            onClick={pickFile}
-            disabled={isRunning}
-            title="Upload a data file"
-            className="flex h-9 w-9 md:h-10 md:w-10 shrink-0 cursor-pointer items-center justify-center rounded-xl bg-brand-50 text-brand hover:bg-brand-100 dark:bg-brand-950/35 dark:text-brand-light dark:hover:bg-brand-950/50 transition-colors disabled:bg-zinc-100 dark:disabled:bg-zinc-800 disabled:text-zinc-400 dark:disabled:text-zinc-600 disabled:cursor-not-allowed"
-          >
-            <PaperclipIcon className="h-5 w-5 md:h-[22px] md:w-[22px]" />
-          </button>
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -313,13 +287,13 @@ const SUGGESTIONS = [
   "Find customers with high fraud risk who are also priority customers.",
 ];
 
-function EmptyState({ onPick, onUploadClick }: { onPick: (t: string) => void; onUploadClick: () => void }) {
+function EmptyState({ onPick }: { onPick: (t: string) => void }) {
   return (
     <div className="flex flex-col items-center justify-center text-center gap-6 py-8 px-4 animate-fade-up">
       <div>
         <h2 className="text-[22px] font-extrabold tracking-tight text-ink">Ask your data anything</h2>
         <p className="mt-2.5 max-w-sm text-[13.5px] leading-relaxed text-ink-soft">
-          You&apos;re connected to your ClickHouse warehouse. Just ask a question to start, no upload needed. Scout discovers the schema, writes the SQL, and builds a dashboard.
+          You&apos;re connected to your ClickHouse warehouse. Just ask a question to start — Scout discovers the schema, writes the SQL, and builds a dashboard.
         </p>
       </div>
 
@@ -337,15 +311,6 @@ function EmptyState({ onPick, onUploadClick }: { onPick: (t: string) => void; on
           </button>
         ))}
       </div>
-
-      {/* upload a new dataset */}
-      <button
-        onClick={onUploadClick}
-        className="flex items-center gap-2 text-[12px] font-semibold text-ink-faint transition-colors hover:text-brand cursor-pointer"
-      >
-        <PaperclipIcon className="h-4 w-4" />
-        or upload a new file (CSV, Excel, JSON)
-      </button>
     </div>
   );
 }

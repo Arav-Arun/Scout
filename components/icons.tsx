@@ -57,18 +57,6 @@ export const PanelLeftIcon = ({ className }: P) => (
   </svg>
 );
 
-export const PaperclipIcon = ({ className }: P) => (
-  <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden>
-    <path
-      d="M13 7.2l-5.6 5.6a3 3 0 0 1-4.24-4.24l6-6a2 2 0 0 1 2.83 2.83l-5.65 5.65a1 1 0 0 1-1.42-1.42L9.7 5"
-      stroke="currentColor"
-      strokeWidth="1.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-  </svg>
-);
-
 export const GearIcon = ({ className }: P) => (
   <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden>
     <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.75" />

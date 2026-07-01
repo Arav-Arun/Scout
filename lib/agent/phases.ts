@@ -195,9 +195,9 @@ function checkColumns(sql: string, idx: ColumnIndex, sub: SubGraph): string | nu
 
 /**
  * Append a grounded hint to a ClickHouse error so the retry is actionable. Handles two cases:
- * (1) an unknown TABLE — the analyst referenced a table that doesn't exist (e.g. an upload
- * that never persisted, or a name hallucinated from the question) — so we name the real
- * tables and the closest match; (2) an unknown COLUMN — resolve it against the in-scope
+ * (1) an unknown TABLE — the analyst referenced a table that doesn't exist (e.g. a name
+ * hallucinated from the question) — so we name the real tables and the closest match;
+ * (2) an unknown COLUMN — resolve it against the in-scope
  * tables and the full catalog, so we can say "that column lives on table X — query/join X".
  */
 function enrichError(message: string, sql: string, idx: ColumnIndex, sub: SubGraph, cat: Catalog): string {
@@ -332,10 +332,10 @@ export async function synthesize(plan: Plan, results: AnalyzeResult[], queries: 
   if (hasQueries && !hasSuccessfulQuery) {
     emit({ type: "step", id, kind: "think", status: "error", label: "No data to synthesise" });
     // If every query failed because the table doesn't exist, say so plainly and list what's
-    // available — far more useful than a generic "rephrase" when an upload never persisted.
+    // available — far more useful than a generic "rephrase" when a table name was hallucinated.
     const missingTable = results.some((r) => /Unknown table expression identifier/i.test(r.error ?? ""));
     const msg = missingTable
-      ? `I couldn't find the table you asked about. Available tables: ${cat.tables.map((t) => t.name).slice(0, 20).join(", ")}. Name one of those, or re-upload the file if you meant a new dataset.`
+      ? `I couldn't find the table you asked about. Available tables: ${cat.tables.map((t) => t.name).slice(0, 20).join(", ")}. Name one of those.`
       : "I couldn't gather enough data to answer that. Could you rephrase or narrow the question?";
     emit({ type: "text", delta: msg });
     return null;

@@ -111,7 +111,6 @@ export default function Home() {
           turns={agent.turns}
           isRunning={agent.isRunning}
           onSend={agent.send}
-          onUpload={agent.uploadFile}
           onToggleCollapse={() => setChatCollapsed(true)}
           activeVersion={agent.activeVersion}
           onSelectVersion={agent.setActiveVersion}
@@ -150,7 +149,6 @@ export default function Home() {
               turns={agent.turns}
               isRunning={agent.isRunning}
               onSend={agent.send}
-              onUpload={agent.uploadFile}
               onToggleCollapse={() => {}}
               activeVersion={agent.activeVersion}
               onSelectVersion={(i) => {

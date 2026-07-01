@@ -1,5 +1,5 @@
-// ClickHouse write transport. The analytics client is pinned read-only (readonly=2), so
-// the write paths — file ingestion (ingest.ts) and schema-graph persistence (persist.ts) —
+// ClickHouse write transport. The analytics client is pinned read-only (readonly=2), so the
+// write paths — the manual-edge store (user-edges.ts) and schema-graph persistence (persist.ts) —
 // go directly over ClickHouse's HTTP interface via chExec() below.
 
 /** Base URL + Basic-auth header for direct HTTP writes (same creds as the read client). */

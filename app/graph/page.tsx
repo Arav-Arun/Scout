@@ -10,16 +10,20 @@ import GraphCanvas from "@/components/GraphCanvas";
 import { ArrowLeftIcon, SparkIcon } from "@/components/icons";
 
 type Source = "declared" | "inferred";
+type Connection = "physical" | "manual";
 type Status = "verified" | "partial" | "dropped" | "unjudged";
 
 interface GNode { id: string; rowCount: number; cols: number; columns: string[]; domain: string }
 interface GEdge {
   a: string; b: string; aCol: string; bCol: string; label: string;
-  source: Source; overlap?: number; verified?: boolean; status: Status;
+  source: Source; connection?: Connection; overlap?: number; verified?: boolean; status: Status;
 }
 interface GraphData { nodes: GNode[]; edges: GEdge[]; dropped: GEdge[] }
 /** The auditable overlap probe: `matched` of `sampled` distinct child keys resolve to the parent. */
 interface Measure { overlap: number; sampled: number; matched: number }
+
+/** physical = recovered from the schema/data structure; manual = human-declared. */
+const connOf = (e: GEdge): Connection => e.connection ?? (e.source === "inferred" ? "physical" : "manual");
 
 const STATUS_STYLE: Record<Status, { label: string; cls: string }> = {
   verified: { label: "verified", cls: "bg-emerald-500/12 text-emerald-600 dark:text-emerald-400" },
@@ -27,9 +31,9 @@ const STATUS_STYLE: Record<Status, { label: string; cls: string }> = {
   dropped: { label: "dropped", cls: "bg-red-500/12 text-red-600 dark:text-red-400" },
   unjudged: { label: "unjudged", cls: "bg-slate-500/12 text-ink-faint" },
 };
-const SOURCE_STYLE: Record<Source, string> = {
-  declared: "bg-violet-500/15 text-violet-600 dark:text-violet-400",
-  inferred: "bg-slate-500/12 text-ink-faint",
+const CONNECTION_STYLE: Record<Connection, string> = {
+  physical: "bg-blue-500/12 text-blue-600 dark:text-blue-400",
+  manual: "bg-violet-500/15 text-violet-600 dark:text-violet-400",
 };
 
 const pct = (o?: number) => (o === undefined || o === null ? "—" : `${Math.round(o * 100)}%`);
@@ -57,7 +61,7 @@ export default function GraphLabPage() {
       verified: c("verified"),
       partial: c("partial"),
       recovered: data.edges.filter((e) => e.aCol !== e.bCol && e.status !== "dropped").length,
-      declared: data.edges.filter((e) => e.source === "declared").length,
+      manual: data.edges.filter((e) => connOf(e) === "manual").length,
       dropped: data.dropped.length,
     };
   }, [data]);
@@ -92,7 +96,7 @@ export default function GraphLabPage() {
               <Stat label="Renamed recovered" value={stats.recovered} tone="brand" />
               <Stat label="Partial (lossy)" value={stats.partial} tone="amber" />
               <Stat label="Phantoms dropped" value={stats.dropped} tone="red" />
-              <Stat label="Declared" value={stats.declared} tone="violet" />
+              <Stat label="Manual" value={stats.manual} tone="violet" />
             </div>
 
             {/* tabs — Visualize / Inspect / Test, with a prominent Add-relationship CTA */}
@@ -154,21 +158,21 @@ function Stat({ label, value, tone }: { label: string; value: number; tone?: str
 // ── Inspect ───────────────────────────────────────────────────────────────────
 function InspectTab({ data, onEdit, onChanged }: { data: GraphData; onEdit: (e: GEdge) => void; onChanged: () => void }) {
   const [q, setQ] = useState("");
-  const [src, setSrc] = useState<"all" | Source>("all");
+  const [conn, setConn] = useState<"all" | Connection>("all");
   const [showDropped, setShowDropped] = useState(false);
 
   const rows = useMemo(() => {
     const all = showDropped ? [...data.edges, ...data.dropped] : data.edges;
     const needle = q.trim().toLowerCase();
     return all
-      .filter((e) => src === "all" || e.source === src)
+      .filter((e) => conn === "all" || connOf(e) === conn)
       .filter((e) =>
         !needle ||
         `${e.a}.${e.aCol} ${e.b}.${e.bCol} ${e.label}`.toLowerCase().includes(needle))
       .sort((x, y) => (y.overlap ?? -1) - (x.overlap ?? -1));
-  }, [data, q, src, showDropped]);
+  }, [data, q, conn, showDropped]);
 
-  // Delete a declared edge inline (inferred edges are automatic, so they have no actions).
+  // Delete a manual edge inline (physical/inferred edges are automatic, so they have no actions).
   const del = async (e: GEdge) => {
     await fetch("/api/graph/edge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ a: e.a, aCol: e.aCol, b: e.b, bCol: e.bCol, remove: true }) });
     onChanged();
@@ -183,11 +187,11 @@ function InspectTab({ data, onEdit, onChanged }: { data: GraphData; onEdit: (e: 
           placeholder="Filter by table, column or label…"
           className="h-9 flex-1 min-w-[200px] rounded-lg border border-line bg-transparent px-3 text-[13px] outline-none focus:border-brand"
         />
-        <select value={src} onChange={(e) => setSrc(e.target.value as typeof src)}
+        <select value={conn} onChange={(e) => setConn(e.target.value as typeof conn)}
           className="h-9 rounded-lg border border-line bg-transparent px-2.5 text-[13px] outline-none focus:border-brand">
-          <option value="all">all sources</option>
-          <option value="declared">declared</option>
-          <option value="inferred">inferred</option>
+          <option value="all">all connections</option>
+          <option value="physical">physical</option>
+          <option value="manual">manual</option>
         </select>
         <label className="flex items-center gap-1.5 text-[12.5px] text-ink-soft">
           <input type="checkbox" checked={showDropped} onChange={(e) => setShowDropped(e.target.checked)} />
@@ -201,7 +205,7 @@ function InspectTab({ data, onEdit, onChanged }: { data: GraphData; onEdit: (e: 
             <tr className="border-b border-line bg-black/[0.02] text-left text-ink-faint dark:bg-white/[0.03]">
               <th className="px-3 py-2.5 font-semibold">Join key</th>
               <th className="px-3 py-2.5 font-semibold">Relationship</th>
-              <th className="px-3 py-2.5 font-semibold">Source</th>
+              <th className="px-3 py-2.5 font-semibold">Connection</th>
               <th className="px-3 py-2.5 font-semibold text-right">Overlap</th>
               <th className="px-3 py-2.5 font-semibold">Verdict</th>
               <th className="px-3 py-2.5 font-semibold text-right">Actions</th>
@@ -214,12 +218,12 @@ function InspectTab({ data, onEdit, onChanged }: { data: GraphData; onEdit: (e: 
                   {e.a}.<b>{e.aCol}</b> = {e.b}.<b>{e.bCol}</b>
                 </td>
                 <td className="px-3 py-2 text-ink-soft">{e.label}</td>
-                <td className="px-3 py-2"><span className={`rounded px-1.5 py-0.5 text-[10.5px] font-semibold ${SOURCE_STYLE[e.source]}`}>{e.source}</span></td>
+                <td className="px-3 py-2"><span className={`rounded px-1.5 py-0.5 text-[10.5px] font-semibold ${CONNECTION_STYLE[connOf(e)]}`}>{connOf(e)}</span></td>
                 <td className="px-3 py-2 text-right font-mono tabular-nums text-ink-soft">{pct(e.overlap)}</td>
                 <td className="px-3 py-2"><span className={`rounded px-1.5 py-0.5 text-[10.5px] font-semibold ${STATUS_STYLE[e.status].cls}`}>{STATUS_STYLE[e.status].label}</span></td>
                 <td className="px-3 py-2 text-right">
-                  {/* Only declared edges are editable; inferred edges are automatic. */}
-                  {e.source === "declared" && e.status !== "dropped" ? (
+                  {/* Only manual edges are editable; physical (inferred) edges are automatic. */}
+                  {connOf(e) === "manual" && e.status !== "dropped" ? (
                     <div className="flex justify-end gap-1">
                       <button onClick={() => onEdit(e)} className="rounded-md px-2 py-1 text-[11px] font-semibold text-brand hover:bg-brand/10">Edit</button>
                       <button onClick={() => del(e)} className="rounded-md px-2 py-1 text-[11px] font-semibold text-red-500 hover:bg-red-500/10">Delete</button>
@@ -343,12 +347,12 @@ function ColPicker({ label, table, col, tables, cols, onTable, onCol }: {
   );
 }
 
-// ── Relationships (manage declared edges) ─────────────────────────────────────
+// ── Relationships (manage manual edges) ───────────────────────────────────────
 function EdgesTab({ data, onChanged, editTarget }: { data: GraphData; onChanged: () => void; editTarget?: GEdge | null }) {
   const tableNames = useMemo(() => data.nodes.map((n) => n.id).sort(), [data]);
   const colsOf = useCallback((t: string) => data.nodes.find((n) => n.id === t)?.columns ?? [], [data]);
-  const declared = useMemo(
-    () => data.edges.filter((e) => e.source === "declared")
+  const manual = useMemo(
+    () => data.edges.filter((e) => connOf(e) === "manual")
       .sort((x, y) => `${x.a}.${x.aCol}`.localeCompare(`${y.a}.${y.aCol}`)),
     [data],
   );
@@ -399,7 +403,7 @@ function EdgesTab({ data, onChanged, editTarget }: { data: GraphData; onChanged:
     <div className="grid gap-6 lg:grid-cols-2">
       <section className="rounded-xl border border-line p-4">
         <h2 className="text-[14px] font-bold">{editing ? "Edit relationship" : "Declare a relationship"}</h2>
-        <p className="mt-1 text-[12px] text-ink-faint">Declared relationships (the curated seed plus anything you add) are the authoritative, non-inferred join keys. Not every join is a foreign key — declare an edge between two related columns; it’s verified against live data, persisted, and merged into the graph right away.</p>
+        <p className="mt-1 text-[12px] text-ink-faint">Manual relationships are the authoritative, human-declared join keys — as opposed to the physical keys recovered automatically from the schema. Not every join is a foreign key — declare an edge between two related columns; it’s verified against live data, persisted, and merged into the graph right away.</p>
         <div className="mt-3 space-y-2.5">
           <ColPicker label="From" table={a} col={aCol} tables={tableNames} cols={colsOf(a)} onTable={(t) => { setA(t); setACol(""); }} onCol={setACol} />
           <ColPicker label="To" table={b} col={bCol} tables={tableNames} cols={colsOf(b)} onTable={(t) => { setB(t); setBCol(""); }} onCol={setBCol} />
@@ -420,12 +424,12 @@ function EdgesTab({ data, onChanged, editTarget }: { data: GraphData; onChanged:
       </section>
 
       <section className="rounded-xl border border-line p-4">
-        <h2 className="text-[14px] font-bold">Declared relationships <span className="text-ink-faint">({declared.length})</span></h2>
-        <p className="mt-1 text-[11.5px] text-ink-faint">Every authoritative join key, all editable. Inferred edges are automatic and not listed here.</p>
-        {declared.length === 0
+        <h2 className="text-[14px] font-bold">Manual relationships <span className="text-ink-faint">({manual.length})</span></h2>
+        <p className="mt-1 text-[11.5px] text-ink-faint">Every human-declared join key, all editable. Physical edges (recovered automatically) are not listed here.</p>
+        {manual.length === 0
           ? <p className="mt-2 text-[12.5px] text-ink-faint">None yet.</p>
           : <ul className="mt-3 max-h-[460px] space-y-2 overflow-y-auto pr-1">
-              {declared.map((e, i) => (
+              {manual.map((e, i) => (
                 <li key={i} className="flex items-center justify-between gap-3 rounded-lg border border-line/70 px-3 py-2">
                   <div className="min-w-0">
                     <div className="truncate font-mono text-[11.5px] text-ink">{e.a}.{e.aCol} = {e.b}.{e.bCol}</div>

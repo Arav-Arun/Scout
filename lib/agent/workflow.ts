@@ -24,7 +24,7 @@ export async function runScoutWorkflow(
   const cat = await discover(emit);
   if (!cat) return noDashboard();
   if (!cat.tables.length) {
-    emit({ type: "text", delta: "The database has no tables yet. Upload a CSV/Excel file and I'll analyse it." });
+    emit({ type: "text", delta: "The warehouse has no tables yet. Run `npm run db:seed-graph` to build it, then ask again." });
     return noDashboard();
   }
 

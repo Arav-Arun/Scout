@@ -9,15 +9,23 @@ import { useMemo, useState } from "react";
 interface GNode { id: string; rowCount: number; domain: string }
 interface GEdge {
   a: string; b: string; aCol: string; bCol: string;
-  source: "declared" | "inferred"; overlap?: number; verified?: boolean;
+  source: "declared" | "inferred"; connection?: "physical" | "manual";
+  overlap?: number; verified?: boolean;
 }
+
+// Edges are differentiated by CONNECTION KIND (colour) and VERIFICATION (line style):
+//   physical = recovered from the schema/data structure (blue) · manual = human-declared (violet)
+//   verified against live data = solid · partial/unverified = dashed.
+const PHYSICAL = "47,107,255"; // blue
+const MANUAL = "139,92,246";   // violet
+const connOf = (e: GEdge) => e.connection ?? (e.source === "inferred" ? "physical" : "manual");
 
 const DOMAIN_COLORS: Record<string, string> = {
   "Customer": "#2f6bff", "Accounts & cards": "#06b6d4", "Payments & rewards": "#22c55e",
   "Lending": "#f59e0b", "Risk & compliance": "#ef4444", "Merchants": "#8b5cf6",
-  "Engagement": "#ec4899", "Branch & staff": "#14b8a6", "Retail / other": "#64748b",
+  "Engagement": "#ec4899", "Branch & staff": "#14b8a6", "Other": "#64748b",
 };
-const DOMAIN_ORDER = ["Customer", "Accounts & cards", "Payments & rewards", "Lending", "Risk & compliance", "Merchants", "Engagement", "Branch & staff", "Retail / other"];
+const DOMAIN_ORDER = ["Customer", "Accounts & cards", "Payments & rewards", "Lending", "Risk & compliance", "Merchants", "Engagement", "Branch & staff", "Other"];
 
 const W = 920, H = 660, CX = 460, CY = 322, R = 212;
 const HUB = new Set(["customer_id", "city"]); // de-emphasised so the hub doesn't dominate the layout
@@ -57,17 +65,14 @@ export default function GraphCanvas({ nodes, edges }: { nodes: GNode[]; edges: G
             if (!pa || !pb) return null;
             const hub = HUB.has(e.aCol) || HUB.has(e.bCol);
             const inc = hover && (e.a === hover || e.b === hover);
-            const partial = e.verified === false; // measured against live data, but low overlap
-            const declared = e.source === "declared";
-            // Colour by verdict: amber = lossy/partial, blue = verified, violet = declared-but-unjudged.
-            const hi = partial ? "#f59e0b" : e.verified ? "#2f6bff" : declared ? "#8b5cf6" : "#2f6bff";
-            let stroke = "rgba(148,163,184,0.28)", w = 1, op = 1;
-            let dash: string | undefined = e.source === "inferred" ? "3 3" : undefined;
-            if (hub) { stroke = "rgba(148,163,184,0.12)"; w = 0.6; }
-            else if (partial) { stroke = "rgba(245,158,11,0.6)"; w = 1; dash = "4 3"; }
-            else if (e.verified) { stroke = "rgba(47,107,255,0.5)"; w = 1.25; dash = undefined; }
-            else if (declared) { stroke = "rgba(139,92,246,0.55)"; w = 1.2; dash = undefined; } // declared, unjudged
-            if (hover) { if (inc) { stroke = hi; w = 1.8; dash = partial ? "4 3" : undefined; } else { op = 0.06; } }
+            const rgb = connOf(e) === "physical" ? PHYSICAL : MANUAL; // colour = connection kind
+            const verified = e.verified === true;                     // line style = verification
+            const hi = `rgb(${rgb})`;
+            // Colour by connection (blue physical / violet manual); solid = verified, dashed = partial/unverified.
+            let stroke = `rgba(${rgb},${verified ? 0.5 : 0.4})`, w = verified ? 1.25 : 1, op = 1;
+            let dash: string | undefined = verified ? undefined : "4 3";
+            if (hub) { stroke = "rgba(148,163,184,0.12)"; w = 0.6; } // hub edges de-emphasised
+            if (hover) { if (inc) { stroke = hi; w = 1.8; } else { op = 0.06; } }
             const pct = e.overlap !== undefined ? ` · ${Math.round(e.overlap * 100)}% overlap` : "";
             return (
               <line key={i} x1={pa.x} y1={pa.y} x2={pb.x} y2={pb.y} stroke={stroke} strokeWidth={w} strokeDasharray={dash} opacity={op}>
@@ -108,18 +113,16 @@ export default function GraphCanvas({ nodes, edges }: { nodes: GNode[]; edges: G
         </div>
 
         <div className="border-line/50 md:border-t md:pt-4">
-          <div className="mb-3 text-[11px] font-bold uppercase tracking-wider text-ink-faint">Relationships</div>
+          <div className="mb-3 text-[11px] font-bold uppercase tracking-wider text-ink-faint">Connections</div>
           <div className="flex flex-wrap gap-x-4 gap-y-2.5 text-[12.5px] font-medium text-ink-soft md:flex-col">
-            <span className="flex items-center gap-2.5"><span className="inline-block w-6 border-t-2" style={{ borderColor: "rgba(47,107,255,0.7)" }} />verified join</span>
-            <span className="flex items-center gap-2.5"><span className="inline-block w-6 border-t-2 border-dashed" style={{ borderColor: "rgba(245,158,11,0.85)" }} />partial overlap</span>
-            <span className="flex items-center gap-2.5"><span className="inline-block w-6 border-t-2" style={{ borderColor: "rgba(139,92,246,0.85)" }} />declared (unverified)</span>
-            <span className="flex items-center gap-2.5"><span className="inline-block w-6 border-t-2 border-dashed" style={{ borderColor: "rgba(148,163,184,0.8)" }} />inferred</span>
+            <span className="flex items-center gap-2.5"><span className="inline-block w-6 border-t-2" style={{ borderColor: `rgb(${PHYSICAL})` }} />physical <span className="text-ink-faint">(inferred)</span></span>
+            <span className="flex items-center gap-2.5"><span className="inline-block w-6 border-t-2" style={{ borderColor: `rgb(${MANUAL})` }} />manual <span className="text-ink-faint">(declared)</span></span>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2.5 text-[12.5px] font-medium text-ink-soft md:flex-col">
+            <span className="flex items-center gap-2.5"><span className="inline-block w-6 border-t-2" style={{ borderColor: "rgba(148,163,184,0.9)" }} />verified join</span>
+            <span className="flex items-center gap-2.5"><span className="inline-block w-6 border-t-2 border-dashed" style={{ borderColor: "rgba(148,163,184,0.9)" }} />partial / unverified</span>
           </div>
         </div>
-
-        <p className="rounded-xl border border-line/40 bg-black/[0.03] px-3 py-2.5 text-[11.5px] leading-relaxed text-ink-faint dark:bg-white/[0.04]">
-          Hover a table to trace its joins; hover an edge for its live key overlap. Join keys are verified against the current data, and phantom edges (no real overlap) are dropped.
-        </p>
       </aside>
     </div>
   );

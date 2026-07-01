@@ -1,7 +1,6 @@
-// user-edges.ts — the editable store of DECLARED join edges (scout_user_edges). It unifies the
-// curated manifest and user-added edges into one place: on first use the curated seed
-// (CURATED_RELATIONSHIPS) is loaded in, after which every edge — curated-origin or user-added —
-// can be added, edited, or deleted from the Graph Lab. ("inferred" edges stay automatic.)
+// user-edges.ts — the editable store of MANUAL (human-declared) join edges (scout_user_edges).
+// Every edge here was added, edited, or deleted from the Graph Lab; "inferred" (physical) edges
+// are recovered automatically and never stored here.
 //
 // Storage is a ReplacingMergeTree keyed by the edge's four endpoints: add re-inserts with
 // active=1, delete writes a tombstone (active=0), edit = delete old + add new; the latest
@@ -9,7 +8,7 @@
 
 import { dbName, runSelect } from "../db/clickhouse";
 import { chExec } from "../db/write";
-import { CURATED_RELATIONSHIPS, type Relationship } from "./relationships";
+import { type Relationship } from "./relationships";
 
 const TABLE = "scout_user_edges";
 
@@ -66,37 +65,7 @@ export async function editUserEdge(prev: UserEdgeInput, next: UserEdgeInput): Pr
   await upsert(next, 1);
 }
 
-const edgeKey = (a: string, ac: string, b: string, bc: string) => `${a}.${ac}~${b}.${bc}`;
-
-let _seedChecked = false; // once per process: skip the DB round-trip on later graph rebuilds
-
-/**
- * Seed the curated manifest into the store once. Idempotent at the DB level too: if ANY curated
- * key already has a row (active or tombstoned), seeding is skipped — so it never duplicates and
- * never resurrects an edge the user deleted. This is the one write the unified-store model needs;
- * it runs lazily on the first graph build.
- */
-export async function seedDeclaredEdges(): Promise<void> {
-  if (_seedChecked) return;
-  try {
-    await ensureTable();
-    const present = await runSelect(`SELECT DISTINCT a, a_col, b, b_col FROM ${qualified()}`);
-    const have = new Set(present.rows.map((r) => edgeKey(String(r.a), String(r.a_col), String(r.b), String(r.b_col))));
-    const curated = CURATED_RELATIONSHIPS.map((r) => ({ a: r.from.table, aCol: r.from.column, b: r.to.table, bCol: r.to.column, label: r.label }));
-    if (!curated.some((c) => have.has(edgeKey(c.a, c.aCol, c.b, c.bCol)))) {
-      const now = nowLiteral();
-      const body = curated
-        .map((e) => JSON.stringify({ a: e.a, a_col: e.aCol, b: e.b, b_col: e.bCol, label: e.label, active: 1, updated_at: now }))
-        .join("\n");
-      await chExec(`INSERT INTO ${qualified()} FORMAT JSONEachRow`, body);
-    }
-    _seedChecked = true; // checked (and seeded if needed) for this process
-  } catch {
-    // Best-effort: leave _seedChecked false so a transient failure retries on the next build.
-  }
-}
-
-/** The active declared edges as Relationships (source = "declared"), or [] if none/unreachable. */
+/** The active manual edges as Relationships (source = "declared"), or [] if none/unreachable. */
 export async function loadUserEdges(): Promise<Relationship[]> {
   try {
     const r = await runSelect(

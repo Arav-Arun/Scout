@@ -1,14 +1,16 @@
 // schema-graph.ts — the schema knowledge graph: tables are nodes, recovered join keys are
-// edges. The warehouse has no foreign keys, so edges come from relationships.ts (curated +
-// inferred) and user-declared edges. Pipeline: BUILD (assemble edges) → VERIFY (probe each
+// edges. The warehouse has no foreign keys, so edges come from two places: inferred edges
+// (relationships.ts, physical) and manual edges (scout_user_edges, human-declared). Pipeline:
+// BUILD (assemble edges) → VERIFY (probe each
 // edge against live data, drop phantoms) → RETRIEVE (walk from the seed tables to the
 // relevant subgraph) → FORMAT (render the "JOIN GRAPH" text the analyst reads).
 // Used by lib/agent/phases.ts (RELATE phase) and app/api (/api/graph viewer).
 
 import { getCatalog, type Catalog } from "../db/catalog";
 import { runSelect, type TableInfo } from "../db/clickhouse";
-import { inferRelationships, HUB_COLUMNS, type Relationship } from "./relationships";
-import { loadUserEdges, seedDeclaredEdges } from "./user-edges";
+import { inferRelationships, HUB_COLUMNS, isMetaTable, type Relationship } from "./relationships";
+import { loadUserEdges } from "./user-edges";
+import { loadStoredGraph, persistSchemaGraph } from "./persist";
 
 /** An undirected edge between two tables, carrying the exact join columns. */
 export interface GraphEdge {
@@ -67,8 +69,9 @@ function hasColumn(t: TableInfo | undefined, col: string): boolean {
  * exist and de-duplicated (declared wins over inferred for the same table pair + columns).
  */
 export function buildSchemaGraph(catalog: Catalog, declaredEdges: Relationship[] = []): SchemaGraph {
-  const present = new Set(catalog.tables.map((t) => t.name));
-  const byName = new Map(catalog.tables.map((t) => [t.name, t]));
+  const tables = catalog.tables.filter((t) => !isMetaTable(t.name)); // exclude Scout's own tables
+  const present = new Set(tables.map((t) => t.name));
+  const byName = new Map(tables.map((t) => [t.name, t]));
   // Priority order: declared > inferred. The first edge seen for a key wins.
   const all: Relationship[] = [...declaredEdges, ...inferRelationships(catalog.tables)];
 
@@ -89,7 +92,7 @@ export function buildSchemaGraph(catalog: Catalog, declaredEdges: Relationship[]
   const edges = [...seen.values()];
   const nodes = new Map<string, { rowCount: number; columns: string[] }>();
   const adj = new Map<string, GraphEdge[]>();
-  for (const t of catalog.tables) {
+  for (const t of tables) {
     nodes.set(t.name, { rowCount: catalog.rowCounts[t.name] ?? 0, columns: t.columns.map((c) => c.name) });
     adj.set(t.name, []);
   }
@@ -196,46 +199,68 @@ async function verifyEdges(graph: SchemaGraph): Promise<void> {
   }
 }
 
-// ── Cache (aligned with the catalog) ─────────────────────────────────────────
+// ── Materialize (write) vs get (read) ────────────────────────────────────────
+// The graph is no longer rebuilt on the request path. materializeSchemaGraph() runs the
+// expensive BUILD + VERIFY and stores the result as the single canonical graph — it's the
+// ONLY place VERIFY runs, and it's called on the triggers that change the graph (edge add/edit/delete).
+// getSchemaGraph() just READS that stored graph, so conversations and the viewer never
+// recompute it. A small in-memory hot cache (keyed by catalog timestamp) is a read-through
+// of the store, refreshed cheaply when the catalog rolls over.
 
 let _graph: SchemaGraph | null = null;
 let _graphCatalogAt = 0;
-let _building: Promise<SchemaGraph> | null = null;
-let _buildingForAt = 0;
+let _reading: Promise<SchemaGraph> | null = null;
+let _readingForAt = 0;
 
-/** Force the next getSchemaGraph() to rebuild — call after declared edges change (the catalog
- *  timestamp is unchanged, so the cache wouldn't otherwise notice). */
-export function invalidateSchemaGraph(): void {
-  _graph = null;
-  _graphCatalogAt = 0;
+/**
+ * Build the schema graph from scratch and store it as the single canonical graph: load the
+ * manual (user-declared) edges, assemble the structure with the inferred edges, VERIFY every
+ * edge against the live data, and persist the result. Refreshes the hot cache. Call this on
+ * the triggers that change the graph — never on the chat request path.
+ */
+export async function materializeSchemaGraph(): Promise<SchemaGraph> {
+  const cat = await getCatalog();
+  const declaredEdges = await loadUserEdges();
+  const g = buildSchemaGraph(cat, declaredEdges);
+  try {
+    await verifyEdges(g);
+  } catch {
+    // Verification is best-effort: a failure leaves the structural graph intact.
+  }
+  try {
+    await persistSchemaGraph(g);
+  } catch {
+    // Persistence is best-effort: the graph is still valid in memory for this process.
+  }
+  _graph = g;
+  _graphCatalogAt = cat.discoveredAt;
+  return g;
 }
 
 /**
- * The schema graph, rebuilt only when the underlying catalog changes: build the structure
- * (instant) from the curated/inferred/user edges, then verify its edges against the live
- * data. Concurrent callers for the same catalog share one in-flight build.
+ * The schema graph, READ from the stored canonical graph (no rebuild, no re-verification).
+ * Returns the hot cache when it's fresh for the current catalog; otherwise re-reads the store.
+ * Only if nothing has ever been materialized does it materialize once (first run / empty store).
+ * Concurrent callers for the same catalog share one in-flight read.
  */
 export async function getSchemaGraph(): Promise<SchemaGraph> {
   const cat = await getCatalog();
   if (_graph && _graphCatalogAt === cat.discoveredAt) return _graph;
-  if (_building && _buildingForAt === cat.discoveredAt) return _building;
+  if (_reading && _readingForAt === cat.discoveredAt) return _reading;
 
-  _buildingForAt = cat.discoveredAt;
-  _building = (async () => {
-    await seedDeclaredEdges();            // one-time curated seed into the store (idempotent)
-    const declaredEdges = await loadUserEdges();
-    const g = buildSchemaGraph(cat, declaredEdges);
+  _readingForAt = cat.discoveredAt;
+  _reading = (async () => {
     try {
-      await verifyEdges(g);
-    } catch {
-      // Verification is best-effort: a failure leaves the structural graph intact.
+      const stored = await loadStoredGraph(cat);
+      const g = stored ?? (await materializeSchemaGraph()); // empty store: materialize once
+      _graph = g;
+      _graphCatalogAt = cat.discoveredAt;
+      return g;
+    } finally {
+      _reading = null;
     }
-    _graph = g;
-    _graphCatalogAt = cat.discoveredAt;
-    _building = null;
-    return g;
   })();
-  return _building;
+  return _reading;
 }
 
 // ── 3 · RETRIEVE ──────────────────────────────────────────────────────────────

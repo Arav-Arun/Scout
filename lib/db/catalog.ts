@@ -18,14 +18,13 @@ let _catalogInFlight: Promise<Catalog> | null = null;
 const CATALOG_TTL_MS = 5 * 60_000; // re-map the warehouse at most every 5 minutes
 
 /**
- * Return the cached warehouse catalog, discovering it on first use. Concurrent
- * callers share a single in-flight discovery. Pass { refresh:true } to force a
- * fresh scan (e.g. right after an upload).
+ * Return the cached warehouse catalog, discovering it on first use and refreshing lazily
+ * after CATALOG_TTL_MS. Concurrent callers share a single in-flight discovery.
  */
-export async function getCatalog(opts?: { refresh?: boolean }): Promise<Catalog> {
+export async function getCatalog(): Promise<Catalog> {
   const fresh = _catalog && Date.now() - _catalog.discoveredAt < CATALOG_TTL_MS;
-  if (!opts?.refresh && fresh) return _catalog!;
-  if (!opts?.refresh && _catalogInFlight) return _catalogInFlight;
+  if (fresh) return _catalog!;
+  if (_catalogInFlight) return _catalogInFlight;
 
   _catalogInFlight = discoverCatalog()
     .then((c) => {
@@ -38,12 +37,6 @@ export async function getCatalog(opts?: { refresh?: boolean }): Promise<Catalog>
       throw e;
     });
   return _catalogInFlight;
-}
-
-/** Drop the cached catalog so the next getCatalog() re-maps the warehouse. */
-export function invalidateCatalog(): void {
-  _catalog = null;
-  _catalogInFlight = null;
 }
 
 /** List every table in the database with its column names + types. */
