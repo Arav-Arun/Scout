@@ -1,24 +1,29 @@
 // LLM client (lib/agent/llm.ts) — thin wrapper over the OpenAI SDK exposing one reusable
 // llmJSON() call that returns parsed JSON, with a defensive brace-extraction fallback.
 //
-// Requests are STREAMED (stream: true) and reassembled here. This is deliberate: a non-streaming
-// completion sends no bytes until the whole answer is generated, so the socket sits idle for the
-// entire generation. Any proxy in the path (Railway's edge, a load balancer) closes an idle
-// connection, which undici surfaces as "Premature close" when we finally read the body. The large
-// synthesis call (max_tokens 3500) is slow enough to hit this on every attempt, so retrying a
-// non-streamed call can't help. Streaming keeps tokens flowing, so the connection never goes idle.
-// A transient-drop retry still wraps the whole read as a backstop for genuine mid-stream failures.
+// ROOT CAUSE of the "Premature close" synthesis failures: the OpenAI SDK (node-fetch path) pools
+// keep-alive TLS sockets to api.openai.com. Synthesis is the only phase that runs *after* the
+// ClickHouse query phase, so its pooled socket sits idle for seconds while queries run; the remote
+// (or a proxy in a deployed container) drops that idle socket, and the large synthesis request sent
+// over the now-dead socket fails with "Premature close". Plan/analyze don't hit it — no long idle
+// gap, smaller bodies. The fix is `keepAlive: false`: a fresh connection per request, so no pooled
+// socket can ever go stale. Streaming + a transient-drop retry remain as belt-and-suspenders.
 
 import OpenAI from "openai";
+import { Agent } from "node:https";
 
 let _openai: OpenAI | null = null;
+
+// A fresh TLS connection per request — never reuse a pooled socket that may have gone stale during
+// the idle gap before synthesis. This is the concrete fix for the "Premature close" failures.
+const httpsAgent = new Agent({ keepAlive: false });
 
 function openai(): OpenAI {
   if (!_openai) {
     if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not set");
-    // maxRetries: SDK backs off on connection resets / 429 / 5xx while opening the stream.
-    // timeout: generous ceiling for the full streamed response (route maxDuration is 300s).
-    _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, maxRetries: 3, timeout: 120_000 });
+    // httpAgent: fresh connection per request (see file header). maxRetries: SDK backs off on
+    // connection resets / 429 / 5xx. timeout: ceiling for the full response (route maxDuration 300s).
+    _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, httpAgent: httpsAgent, maxRetries: 3, timeout: 120_000 });
   }
   return _openai;
 }
