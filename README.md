@@ -1,6 +1,6 @@
 # Scout - AI Data Analytics Agent over ClickHouse
 
-Scout is a production-ready analytics agent that sits on top of **your ClickHouse warehouse** and
+Scout is an analytics agent that sits on top of **your ClickHouse warehouse** and
 answers open-ended business questions in plain English. It works the way a senior analyst would:
 **map the schema, work out which tables join and on what keys, write the SQL, run it, and explain
 the result**, all at runtime, streamed live to a dashboard.
@@ -37,18 +37,12 @@ who wants answers from crore-row tables without writing SQL by hand.
 - **Built for scale.** All aggregation is pushed down into ClickHouse; the agent only ever reads
   small aggregated result sets. Schema discovery, the join graph, and column-value profiles are
   cached, so a question costs queries, not warehouse scans.
-- **Numbers that reconcile.** Totals are queried, never hand-summed by the model; exact column
-  aggregates and unit conversions (Cr / lakh) are computed in code and handed to the model
-  verbatim, so a part can never exceed its whole.
 - **Self-correcting SQL.** A graph-backed column guard catches wrong-table column references
   before they run, and ClickHouse errors are enriched with the table that actually owns the
   column plus the exact join key to reach it, so retries are grounded rather than guesses.
 - **The Graph RAG Lab.** An in-app workbench (`/graph`) to visualize the recovered schema graph,
   inspect every join key with its live overlap and verdict, test retrieval, probe any two columns,
   and declare the aliased relationships automatic inference can't see.
-- **A real product surface.** Multi-turn follow-ups, versioned dashboards per conversation,
-  one-click Export SQL for every query behind an answer, shareable Markdown reports, dark mode,
-  and a responsive mobile layout.
 - **Simple to operate.** One Node.js service, five environment variables, a `/health` liveness
   endpoint, and a streaming NDJSON API. Deploys anywhere Node runs.
 
