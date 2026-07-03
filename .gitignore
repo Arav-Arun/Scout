@@ -11,7 +11,7 @@ next-env.d.ts
 # production
 /build
 
-# env — never commit secrets
+# env - never commit secrets
 .env
 .env.local
 .env*.local
@@ -41,13 +41,13 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# local dev, seeding & test scripts — kept out of the public repo entirely
+# local dev, seeding & test scripts - kept out of the public repo entirely
 /scripts/
 
-# internal Graph RAG demo (standalone Streamlit prototype) — internal test tool, not showcase app code
+# internal Graph RAG demo (standalone Streamlit prototype) - internal test tool, not showcase app code
 /graph_rag_demo/
 
-# internal docs / notes — only README.md is tracked on the public repo
+# internal docs / notes - only README.md is tracked on the public repo
 *.md
 !README.md
 

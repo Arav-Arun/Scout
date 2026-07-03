@@ -1,4 +1,4 @@
-// LLM client (lib/agent/llm.ts) — thin wrapper over the OpenAI SDK exposing one reusable
+// LLM client (lib/agent/llm.ts) - thin wrapper over the OpenAI SDK exposing one reusable
 // llmJSON() call that returns parsed JSON, with a defensive brace-extraction fallback.
 
 import OpenAI from "openai";
@@ -6,7 +6,7 @@ import { Agent } from "node:https";
 
 let _openai: OpenAI | null = null;
 
-// A fresh TLS connection per request — never reuse a pooled socket that may have gone stale during
+// A fresh TLS connection per request - never reuse a pooled socket that may have gone stale during
 // the idle gap before synthesis. This is the concrete fix for the "Premature close" failures.
 const httpsAgent = new Agent({ keepAlive: false });
 

@@ -1,4 +1,4 @@
-// Agent context (lib/agent/context.ts) — shared data shapes (Plan, AnalyzeResult),
+// Agent context (lib/agent/context.ts) - shared data shapes (Plan, AnalyzeResult),
 // small id/error helpers, and the formatters that turn catalog/schema/results into the
 // prompt text the LLM reads. Lower layer: imported by phases.ts and workflow.ts, never
 // the reverse.
@@ -116,7 +116,7 @@ function fmtCount(n: number): string {
 
 /**
  * Exact crore/lakh rendering of a magnitude (1 Cr = 1e7, 1 L = 1e5), computed in code so the
- * model copies the right figure instead of re-scaling in its head — a hand R/1e7 conversion is
+ * model copies the right figure instead of re-scaling in its head - a hand R/1e7 conversion is
  * how a hero metric ended up 10x too large.
  */
 function inrScale(n: number): string {
@@ -174,7 +174,9 @@ export function resultsBlock(results: AnalyzeResult[]): string {
   return results
     .map((r, i) => {
       if (r.error) return `#${i + 1} ${r.purpose}\nSQL: ${r.sql}\nERROR: ${r.error}`;
-      const sample = JSON.stringify(r.rows.slice(0, 25));
+      // r.rows is already capped at 40 by the analyze loop - show all of it, so the sample
+      // matches the "top 40 rows" the system prompt promises and the column aggregates' scope.
+      const sample = JSON.stringify(r.rows.slice(0, 40));
       const aggs = columnAggregates(r.rows, r.rowCount);
       return `#${i + 1} ${r.purpose} (${r.rowCount} rows)\nSQL: ${r.sql}\nRows: ${sample}${aggs}`;
     })

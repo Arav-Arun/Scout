@@ -1,8 +1,9 @@
-// persist.ts — the single canonical, read-back store for the recovered + verified schema
-// graph, in ClickHouse (scout_schema_graph_edges / _nodes). This is not an append-only audit
-// log: each materialization writes the whole graph under a fresh built_at and then prunes the
-// older snapshot, so the tables always hold exactly ONE graph. loadStoredGraph() reads it back
-// (no re-verification) — that's what the agent's RELATE phase and the graph viewer consume, so
+// persist.ts - the single canonical, read-back store for the recovered + verified schema
+// graph, in ClickHouse (scout_schema_graph_edges / _nodes).
+// This is not an append-only audit log: each materialization writes the whole graph under a fresh built_at and then prunes the
+// older snapshot, so the tables always hold exactly ONE graph.
+// loadStoredGraph() reads it back
+// (no re-verification) - that's what the agent's RELATE phase and the graph viewer consume, so
 // the expensive build/verify runs only when the graph is materialized, not per conversation.
 //
 // Writes use the HTTP write transport (lib/db/write.ts), not the read-only analytics client;
@@ -21,7 +22,7 @@ const EDGES_TABLE = "scout_schema_graph_edges";
 const NODES_TABLE = "scout_schema_graph_nodes";
 const STRONG_OVERLAP = 0.5; // mirrors schema-graph.ts: ≥ this ⇒ "verified"
 
-/** verified | partial | dropped | unjudged — derived from the measured overlap. */
+/** verified | partial | dropped | unjudged - derived from the measured overlap. */
 function statusOf(e: GraphEdge): string {
   if (e.overlap === undefined) return "unjudged";
   if (e.overlap === 0) return "dropped";
@@ -127,7 +128,7 @@ export async function persistSchemaGraph(graph: SchemaGraph): Promise<void> {
 }
 
 /**
- * Read the single stored graph back into an in-memory SchemaGraph, with NO re-verification —
+ * Read the single stored graph back into an in-memory SchemaGraph, with NO re-verification -
  * the edges keep the overlap/verified verdicts measured at materialization time. Nodes
  * (row counts + column lists) come from the live catalog (cheap, cached); edges come from the
  * stored snapshot. Returns null if nothing has been materialized yet (so the caller can
@@ -148,7 +149,7 @@ export async function loadStoredGraph(catalog: Catalog): Promise<SchemaGraph | n
     );
     rows = res.rows;
   } catch {
-    return null; // table not created yet, or warehouse unreachable — caller materializes
+    return null; // table not created yet, or warehouse unreachable - caller materializes
   }
   if (!rows.length) return null; // never materialized
 

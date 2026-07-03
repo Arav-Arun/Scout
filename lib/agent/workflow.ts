@@ -1,4 +1,4 @@
-// Workflow (lib/agent/workflow.ts) — thin orchestrator: turns one natural-language question
+// Workflow (lib/agent/workflow.ts) - thin orchestrator: turns one natural-language question
 // into a dashboard via the 6-phase pipeline, in order:
 //   DISCOVER → PLAN → RELATE → INSPECT → ANALYZE↻ → SYNTHESIZE
 // RELATE is the Graph RAG step (walks lib/graph/ to recover join keys; the warehouse has no
@@ -24,7 +24,7 @@ export async function runScoutWorkflow(
   const cat = await discover(emit);
   if (!cat) return noDashboard();
   if (!cat.tables.length) {
-    emit({ type: "text", delta: "The warehouse has no tables yet. Run `npm run db:seed-graph` to build it, then ask again." });
+    emit({ type: "text", delta: "The warehouse has no tables yet. Point Scout at a populated ClickHouse database, then ask again." });
     return noDashboard();
   }
 

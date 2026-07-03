@@ -1,4 +1,4 @@
-// useScoutAgent — owns the client-side agent state: conversation turns, dashboard
+// useScoutAgent - owns the client-side agent state: conversation turns, dashboard
 // versions, and streaming. Consumes POST /api/chat, reading an NDJSON stream of
 // ScoutEvent (lib/types.ts).
 

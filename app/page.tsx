@@ -1,6 +1,6 @@
 "use client";
 
-// Home (app/page.tsx) — layout shell only; agent state lives in hooks/useScoutAgent.ts.
+// Home (app/page.tsx) - layout shell only; agent state lives in hooks/useScoutAgent.ts.
 // Handles desktop/mobile layout switching, theme toggle + persistence (see the pre-paint
 // script in app/layout.tsx), sidebar resize, and rendering ChatPanel + DashboardPanel.
 

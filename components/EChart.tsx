@@ -1,6 +1,6 @@
 "use client";
 
-// EChart — thin wrapper around Apache ECharts v5. Receives a complete `echarts` options
+// EChart - thin wrapper around Apache ECharts v5. Receives a complete `echarts` options
 // object (built by the agent's synthesize phase, typed as ChartSpec.echarts in lib/types.ts)
 // and layers theme-aware defaults under it. Used by DashboardPanel.tsx, one per ChartSpec.
 
@@ -56,9 +56,11 @@ export default function EChart({
     const c = THEME_COLORS[theme];
     const chart = echarts.init(ref.current, undefined, { renderer: "canvas" });
 
+    // Match the app font (canvas text can't resolve CSS variables, so read the computed stack).
+    const fontFamily = getComputedStyle(ref.current).fontFamily || "sans-serif";
     const merged: Record<string, unknown> = {
       color: PALETTE,
-      textStyle: { fontFamily: "Inter, sans-serif", color: c.text, fontSize: 11 },
+      textStyle: { fontFamily, color: c.text, fontSize: 11 },
       grid: { containLabel: true, left: 8, right: 16, top: 24, bottom: 8 },
       ...spec,
     };

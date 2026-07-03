@@ -1,4 +1,4 @@
-// user-edges.ts — the editable store of MANUAL (human-declared) join edges (scout_user_edges).
+// user-edges.ts - the editable store of MANUAL (human-declared) join edges (scout_user_edges).
 // Every edge here was added, edited, or deleted from the Graph Lab; "inferred" (physical) edges
 // are recovered automatically and never stored here.
 //
@@ -78,6 +78,6 @@ export async function loadUserEdges(): Promise<Relationship[]> {
       source: "declared" as const,
     }));
   } catch {
-    return []; // table not created yet, or warehouse unreachable — fail open
+    return []; // table not created yet, or warehouse unreachable - fail open
   }
 }

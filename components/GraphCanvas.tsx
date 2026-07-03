@@ -1,6 +1,6 @@
 "use client";
 
-// GraphCanvas — pure-SVG view of the schema knowledge graph: tables are nodes,
+// GraphCanvas - pure-SVG view of the schema knowledge graph: tables are nodes,
 // recovered join keys are edges, grouped and coloured by sub-domain. Hover a table
 // to trace its joins. Deterministic radial layout, no graph library.
 

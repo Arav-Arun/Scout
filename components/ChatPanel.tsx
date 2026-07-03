@@ -1,6 +1,6 @@
 "use client";
 
-// ChatPanel (left pane) — the conversation surface: composer, transcript, live
+// ChatPanel (left pane) - the conversation surface: composer, transcript, live
 // reasoning-step chips, and settings. Mounted by app/page.tsx, which owns the state
 // and the onSend callback. Reads GET /api/db-info for the warehouse connection banner.
 
@@ -293,7 +293,7 @@ function EmptyState({ onPick }: { onPick: (t: string) => void }) {
       <div>
         <h2 className="text-[22px] font-extrabold tracking-tight text-ink">Ask your data anything</h2>
         <p className="mt-2.5 max-w-sm text-[13.5px] leading-relaxed text-ink-soft">
-          You&apos;re connected to your ClickHouse warehouse. Just ask a question to start — Scout discovers the schema, writes the SQL, and builds a dashboard.
+          You&apos;re connected to your ClickHouse warehouse. Just ask a question to start - Scout discovers the schema, writes the SQL, and builds a dashboard.
         </p>
       </div>
 

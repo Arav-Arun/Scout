@@ -1,6 +1,6 @@
 "use client";
 
-// DashboardPanel (right pane) — renders the agent's final answer: title, hero metrics,
+// DashboardPanel (right pane) - renders the agent's final answer: title, hero metrics,
 // charts (each with its written insight), tables, recommendations, and Export SQL / Share.
 // Mounted by app/page.tsx from DashboardVersion[]; delegates chart rendering to EChart.tsx.
 

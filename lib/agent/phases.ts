@@ -1,4 +1,4 @@
-// Agent phases (lib/agent/phases.ts) — the six pipeline phases, one function each:
+// Agent phases (lib/agent/phases.ts) - the six pipeline phases, one function each:
 // discover → planAnalysis → relate → inspect → analyze → synthesize (RELATE is the Graph
 // RAG retrieval step over lib/graph/). Each phase takes its context plus `emit`, streams its
 // own step chips, and returns its output; workflow.ts calls them in order.
@@ -175,19 +175,15 @@ function joinSuggestion(sub: SubGraph, owner: string, inScope: Set<string>): str
 function checkColumns(sql: string, idx: ColumnIndex, sub: SubGraph): string | null {
   const aliases = aliasMap(sql, idx.tableCols);
   if (!aliases.size) return null;
-  const seen = new Set<string>();
   const qref = /\b([A-Za-z_]\w*)\.([A-Za-z_]\w*)\b/g;
   let m: RegExpExecArray | null;
   while ((m = qref.exec(sql)) !== null) {
     const [, q, col] = m;
     const table = aliases.get(q);
-    if (!table || col === "*") continue;
+    if (!table) continue;
     if (idx.tableCols.get(table)?.has(col)) continue; // valid reference
     const owners = (idx.colOwners.get(col) ?? []).filter((o) => o !== table);
     if (!owners.length) continue; // unknown everywhere - could be a computed alias; let CH judge
-    const key = `${table}.${col}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
     return `Column \`${col}\` is not on table \`${table}\`; it lives on \`${owners[0]}\`.${joinSuggestion(sub, owners[0], new Set([table]))} The warehouse has no foreign keys, so you must JOIN to read it.`;
   }
   return null;
@@ -195,10 +191,10 @@ function checkColumns(sql: string, idx: ColumnIndex, sub: SubGraph): string | nu
 
 /**
  * Append a grounded hint to a ClickHouse error so the retry is actionable. Handles two cases:
- * (1) an unknown TABLE — the analyst referenced a table that doesn't exist (e.g. a name
- * hallucinated from the question) — so we name the real tables and the closest match;
- * (2) an unknown COLUMN — resolve it against the in-scope
- * tables and the full catalog, so we can say "that column lives on table X — query/join X".
+ * (1) an unknown TABLE - the analyst referenced a table that doesn't exist (e.g. a name
+ * hallucinated from the question) - so we name the real tables and the closest match;
+ * (2) an unknown COLUMN - resolve it against the in-scope
+ * tables and the full catalog, so we can say "that column lives on table X - query/join X".
  */
 function enrichError(message: string, sql: string, idx: ColumnIndex, sub: SubGraph, cat: Catalog): string {
   // (1) Unknown table: the referenced table isn't in the warehouse at all. Without this the
@@ -210,7 +206,7 @@ function enrichError(message: string, sql: string, idx: ColumnIndex, sub: SubGra
     const close = all.filter((n) => n === ref || n.includes(ref) || ref.includes(n) || n.startsWith(ref.slice(0, 6)));
     const suggest = close.length ? ` Did you mean: ${close.slice(0, 3).map((n) => `\`${n}\``).join(", ")}?` : "";
     const list = all.slice(0, 20).join(", ") + (all.length > 20 ? `, …(+${all.length - 20})` : "");
-    return `${message}  Hint: there is NO table named \`${ref}\` in the warehouse.${suggest} Only query tables that exist — available tables: ${list}.`;
+    return `${message}  Hint: there is NO table named \`${ref}\` in the warehouse.${suggest} Only query tables that exist - available tables: ${list}.`;
   }
 
   // (2) Unknown column: resolve which table actually owns it.
@@ -328,11 +324,11 @@ export async function synthesize(plan: Plan, results: AnalyzeResult[], queries: 
   const id = stepId();
   emit({ type: "step", id, kind: "think", status: "running", label: "Synthesising the dashboard" });
   const hasQueries = results.length > 0;
-  const hasSuccessfulQuery = results.some((r) => !r.error && r.rowCount >= 0 && r.rows);
+  const hasSuccessfulQuery = results.some((r) => !r.error);
   if (hasQueries && !hasSuccessfulQuery) {
     emit({ type: "step", id, kind: "think", status: "error", label: "No data to synthesise" });
     // If every query failed because the table doesn't exist, say so plainly and list what's
-    // available — far more useful than a generic "rephrase" when a table name was hallucinated.
+    // available - far more useful than a generic "rephrase" when a table name was hallucinated.
     const missingTable = results.some((r) => /Unknown table expression identifier/i.test(r.error ?? ""));
     const msg = missingTable
       ? `I couldn't find the table you asked about. Available tables: ${cat.tables.map((t) => t.name).slice(0, 20).join(", ")}. Name one of those.`
@@ -379,7 +375,7 @@ function normalizeDashboard(args: Record<string, unknown>): Dashboard {
       : [],
     charts: Array.isArray(a.charts)
       ? a.charts
-          .filter((c) => c && typeof c.echarts === "object")
+          .filter((c) => c && c.echarts && typeof c.echarts === "object")
           .map((c) => ({
             title: String(c.title ?? ""),
             insight: String(c.insight ?? ""),

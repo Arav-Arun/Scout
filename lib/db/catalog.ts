@@ -1,8 +1,9 @@
-// Warehouse catalog — an in-memory map of every table's columns plus a free
+// Warehouse catalog - an in-memory map of every table's columns plus a free
 // row-count estimate, discovered once and refreshed lazily after CATALOG_TTL_MS.
 // Stateless data access (client, runSelect, describeTable) lives in clickhouse.ts.
 
 import { runSelect, dbName, type TableInfo } from "./clickhouse";
+import { isMetaTable } from "../graph/relationships";
 
 /** The warehouse, mapped once: every table's columns plus a free row-count estimate. */
 export interface Catalog {
@@ -59,7 +60,9 @@ async function listTables(): Promise<TableInfo[]> {
 
 /** One-shot warehouse scan: all tables + columns, plus free row-count estimates. */
 async function discoverCatalog(): Promise<Catalog> {
-  const tables = await listTables();
+  // Scout's own bookkeeping tables (scout_*) are not analytics tables: keep them out of
+  // the catalog so the planner never seeds them and the WAREHOUSE facts count only real data.
+  const tables = (await listTables()).filter((t) => !isMetaTable(t.name));
   const rowCounts: Record<string, number> = {};
   try {
     // system.tables.total_rows is MergeTree metadata, not a data scan, so this stays

@@ -1,6 +1,6 @@
 "use client";
 
-// Graph RAG Lab (app/graph/page.tsx) — in-app page to inspect and test the schema
+// Graph RAG Lab (app/graph/page.tsx) - in-app page to inspect and test the schema
 // knowledge graph the agent uses. Tabs: Visualize (the graph), Inspect (every recovered
 // edge + live overlap + verdict), Test (subgraph retrieval + join probe), and Add
 // relationship (declare a non-FK edge between two related columns; verified and merged in).
@@ -36,7 +36,7 @@ const CONNECTION_STYLE: Record<Connection, string> = {
   manual: "bg-violet-500/15 text-violet-600 dark:text-violet-400",
 };
 
-const pct = (o?: number) => (o === undefined || o === null ? "—" : `${Math.round(o * 100)}%`);
+const pct = (o?: number) => (o === undefined || o === null ? "-" : `${Math.round(o * 100)}%`);
 
 export default function GraphLabPage() {
   const [data, setData] = useState<GraphData | null>(null);
@@ -99,7 +99,7 @@ export default function GraphLabPage() {
               <Stat label="Manual" value={stats.manual} tone="violet" />
             </div>
 
-            {/* tabs — Visualize / Inspect / Test, with a prominent Add-relationship CTA */}
+            {/* tabs - Visualize / Inspect / Test, with a prominent Add-relationship CTA */}
             <div className="mt-7 flex items-center justify-between gap-3 border-b border-line">
               <div className="flex gap-1">
                 {(["visualize", "inspect", "test"] as const).map((t) => (
@@ -228,7 +228,7 @@ function InspectTab({ data, onEdit, onChanged }: { data: GraphData; onEdit: (e: 
                       <button onClick={() => onEdit(e)} className="rounded-md px-2 py-1 text-[11px] font-semibold text-brand hover:bg-brand/10">Edit</button>
                       <button onClick={() => del(e)} className="rounded-md px-2 py-1 text-[11px] font-semibold text-red-500 hover:bg-red-500/10">Delete</button>
                     </div>
-                  ) : <span className="text-ink-faint">—</span>}
+                  ) : <span className="text-ink-faint">-</span>}
                 </td>
               </tr>
             ))}
@@ -302,7 +302,7 @@ function TestTab({ data }: { data: GraphData }) {
       {/* probe */}
       <section className="rounded-xl border border-line p-4">
         <h2 className="text-[14px] font-bold">Probe a join</h2>
-        <p className="mt-1 text-[12px] text-ink-faint">Measure the real value overlap between any two columns — the verification the graph runs before trusting a join.</p>
+        <p className="mt-1 text-[12px] text-ink-faint">Measure the real value overlap between any two columns - the verification the graph runs before trusting a join.</p>
         <div className="mt-3 space-y-2.5">
           <ColPicker label="Left" table={pa} col={pac} tables={tableNames} cols={colsOf(pa)} onTable={(t) => { setPa(t); setPac(""); }} onCol={setPac} />
           <ColPicker label="Right" table={pb} col={pbc} tables={tableNames} cols={colsOf(pb)} onTable={(t) => { setPb(t); setPbc(""); }} onCol={setPbc} />
@@ -317,7 +317,7 @@ function TestTab({ data }: { data: GraphData }) {
               ? <span className="text-ink-faint">No values to measure (empty column).</span>
               : <>
                   Value overlap: <b className={probe.overlap >= 0.5 ? "text-emerald-600 dark:text-emerald-400" : probe.overlap > 0 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}>{Math.round(probe.overlap * 100)}%</b>
-                  <span className="ml-2 text-ink-faint">{probe.overlap >= 0.5 ? "real join key" : probe.overlap > 0 ? "lossy / partial" : "phantom — no shared values"}</span>
+                  <span className="ml-2 text-ink-faint">{probe.overlap >= 0.5 ? "real join key" : probe.overlap > 0 ? "lossy / partial" : "phantom - no shared values"}</span>
                   <div className="mt-1 font-mono text-[11.5px] text-ink-faint">{probe.matched.toLocaleString()} of {probe.sampled.toLocaleString()} sampled distinct keys match</div>
                 </>}
           </div>
@@ -384,7 +384,7 @@ function EdgesTab({ data, onChanged, editTarget }: { data: GraphData; onChanged:
       if (r.error) { setMsg({ ok: false, text: r.error }); return; }
       const m: Measure | null = r.measure ?? null;
       const ov = m
-        ? `${Math.round(m.overlap * 100)}% live overlap — ${m.matched.toLocaleString()} of ${m.sampled.toLocaleString()} sampled keys match`
+        ? `${Math.round(m.overlap * 100)}% live overlap - ${m.matched.toLocaleString()} of ${m.sampled.toLocaleString()} sampled keys match`
         : "overlap not measurable";
       setMsg({ ok: true, text: `${editing ? "Relationship updated" : "Relationship added"} and verified (${ov}).` });
       setEditing(null); setLabel("");
@@ -403,7 +403,7 @@ function EdgesTab({ data, onChanged, editTarget }: { data: GraphData; onChanged:
     <div className="grid gap-6 lg:grid-cols-2">
       <section className="rounded-xl border border-line p-4">
         <h2 className="text-[14px] font-bold">{editing ? "Edit relationship" : "Declare a relationship"}</h2>
-        <p className="mt-1 text-[12px] text-ink-faint">Manual relationships are the authoritative, human-declared join keys — as opposed to the physical keys recovered automatically from the schema. Not every join is a foreign key — declare an edge between two related columns; it’s verified against live data, persisted, and merged into the graph right away.</p>
+        <p className="mt-1 text-[12px] text-ink-faint">Manual relationships are the authoritative, human-declared join keys - as opposed to the physical keys recovered automatically from the schema. Not every join is a foreign key - declare an edge between two related columns; it’s verified against live data, persisted, and merged into the graph right away.</p>
         <div className="mt-3 space-y-2.5">
           <ColPicker label="From" table={a} col={aCol} tables={tableNames} cols={colsOf(a)} onTable={(t) => { setA(t); setACol(""); }} onCol={setACol} />
           <ColPicker label="To" table={b} col={bCol} tables={tableNames} cols={colsOf(b)} onTable={(t) => { setB(t); setBCol(""); }} onCol={setBCol} />

@@ -1,4 +1,4 @@
-// System prompts (lib/agent/prompts.ts) — all LLM system prompts, kept separate from
+// System prompts (lib/agent/prompts.ts) - all LLM system prompts, kept separate from
 // orchestration so they can be iterated independently.
 
 const SCOUT_SYSTEM_PROMPT = `You are **Scout** - an AI Data Analytics Agent for a serious analyst working a banking / fintech portfolio (customers, accounts, cards, lending, payments, risk & compliance).
@@ -169,7 +169,7 @@ The dashboard you return has:
 
 - Include \`tooltip\`. Do NOT set a chart \`title\` inside the echarts spec (the card
   already shows the title). Keep \`legend\` only when it aids reading.
-- Palette: ["#3b6ef6", "#22c55e", "#f59e0b", "#ef4444", "#06b6d4", "#8b5cf6", "#ec4899", "#14b8a6"].
+- Palette: ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#06b6d4", "#8b5cf6", "#ec4899", "#14b8a6"].
 - Pie → donut: \`series[0].type:"pie"\`, \`radius:["45%","72%"]\`, \`avoidLabelOverlap:true\`.
   Keep slice labels short (percentage only) and rely on the legend for names so tiny
   slices don't overlap. For a "distribution" prefer ≤ 6 slices.

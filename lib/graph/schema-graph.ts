@@ -1,4 +1,4 @@
-// schema-graph.ts — the schema knowledge graph: tables are nodes, recovered join keys are
+// schema-graph.ts - the schema knowledge graph: tables are nodes, recovered join keys are
 // edges. The warehouse has no foreign keys, so edges come from two places: inferred edges
 // (relationships.ts, physical) and manual edges (scout_user_edges, human-declared). Pipeline:
 // BUILD (assemble edges) → VERIFY (probe each
@@ -106,8 +106,8 @@ export function buildSchemaGraph(catalog: Catalog, declaredEdges: Relationship[]
 // ── 2 · VERIFY ───────────────────────────────────────────────────────────────
 // A shared column name doesn't prove two columns join: account_transactions.txn_id and
 // card_transactions.txn_id share a name but have zero overlapping values (an inner join
-// returns nothing). So each edge is measured against live data — the fraction of a child
-// key's sampled distinct values that resolve to a parent key — then phantoms are dropped
+// returns nothing). So each edge is measured against live data - the fraction of a child
+// key's sampled distinct values that resolve to a parent key - then phantoms are dropped
 // and the rest marked verified or partial. Fail-open: a probe error or timeout leaves the
 // edge un-judged rather than dropping a possibly-real key.
 
@@ -184,7 +184,7 @@ async function verifyEdges(graph: SchemaGraph): Promise<void> {
 
   // Retain the confirmed phantoms (exactly 0% overlap) for persistence/diagnostics before
   // they're dropped from the traversable graph below. Declared edges are never dropped
-  // (a human asserted the relationship) — their overlap is still measured and shown.
+  // (a human asserted the relationship) - their overlap is still measured and shown.
   graph.droppedEdges = edges.filter((e) => e.overlap === 0 && e.source !== "declared");
 
   // Drop confirmed phantoms (measured exactly 0% overlap); keep partial, un-judged + declared edges.
@@ -201,7 +201,7 @@ async function verifyEdges(graph: SchemaGraph): Promise<void> {
 
 // ── Materialize (write) vs get (read) ────────────────────────────────────────
 // The graph is no longer rebuilt on the request path. materializeSchemaGraph() runs the
-// expensive BUILD + VERIFY and stores the result as the single canonical graph — it's the
+// expensive BUILD + VERIFY and stores the result as the single canonical graph - it's the
 // ONLY place VERIFY runs, and it's called on the triggers that change the graph (edge add/edit/delete).
 // getSchemaGraph() just READS that stored graph, so conversations and the viewer never
 // recompute it. A small in-memory hot cache (keyed by catalog timestamp) is a read-through
@@ -216,7 +216,7 @@ let _readingForAt = 0;
  * Build the schema graph from scratch and store it as the single canonical graph: load the
  * manual (user-declared) edges, assemble the structure with the inferred edges, VERIFY every
  * edge against the live data, and persist the result. Refreshes the hot cache. Call this on
- * the triggers that change the graph — never on the chat request path.
+ * the triggers that change the graph - never on the chat request path.
  */
 export async function materializeSchemaGraph(): Promise<SchemaGraph> {
   const cat = await getCatalog();

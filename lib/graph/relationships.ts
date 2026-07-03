@@ -1,8 +1,8 @@
-// relationships.ts — the join edges for the schema graph, recovered without any foreign-key
+// relationships.ts - the join edges for the schema graph, recovered without any foreign-key
 // metadata. Two kinds:
-//   1. INFERRED (physical) — any key-like column (*_id or a known join column) shared between
+//   1. INFERRED (physical) - any key-like column (*_id or a known join column) shared between
 //      a table and its canonical parent becomes an edge; recomputed from the live catalog.
-//   2. MANUAL — human-declared edges managed in the Graph Lab (stored in scout_user_edges),
+//   2. MANUAL - human-declared edges managed in the Graph Lab (stored in scout_user_edges),
 //      including aliased keys inference can't see (e.g. collections.assigned_employee_id →
 //      employees.employee_id). Add/edit/delete from the UI.
 // buildSchemaGraph() (schema-graph.ts) merges both, the manual (declared) edge winning on conflict.
@@ -34,7 +34,7 @@ export function connectionOf(source: "declared" | "inferred" | undefined): Conne
 
 /** Scout's own bookkeeping tables (the graph store + editable-edges store). They live in the
  *  same database as the warehouse but are not analytics tables, so the schema graph excludes
- *  them from its nodes — they'd otherwise show up as isolated, meaningless dots. */
+ *  them from its nodes - they'd otherwise show up as isolated, meaningless dots. */
 export const isMetaTable = (name: string): boolean => name.startsWith("scout_");
 
 /**

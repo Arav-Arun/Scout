@@ -1,4 +1,4 @@
-// route.ts — the app's API surface (catch-all). GET: db-info, graph (the recovered graph
+// route.ts - the app's API surface (catch-all). GET: db-info, graph (the recovered graph
 // for the viewer). POST: chat (streamed agent run) and the Graph Lab actions graph/probe,
 // graph/retrieve, graph/edge.
 
@@ -126,11 +126,17 @@ export async function POST(
       /* probe/retrieve may post an empty body; treat as {} */
     }
     try {
-      // Live value-overlap probe for an arbitrary column pair — the exact check the agent runs.
+      // Live value-overlap probe for an arbitrary column pair - the exact check the agent runs.
       if (sub === "probe") {
         const { a, aCol, b, bCol } = body as Record<string, string>;
         if (!a || !aCol || !b || !bCol) {
           return Response.json({ error: "a, aCol, b, bCol are required" }, { status: 400 });
+        }
+        // Validate the identifiers against the catalog before they reach SQL (same as edge below).
+        const cat = await getCatalog();
+        const has = (t: string, c: string) => cat.tables.find((x) => x.name === t)?.columns.some((x) => x.name === c);
+        if (!has(a, aCol) || !has(b, bCol)) {
+          return Response.json({ error: "Unknown table or column" }, { status: 400 });
         }
         const measure = await measureOverlap(a, aCol, b, bCol);
         return Response.json({ measure }); // {overlap, sampled, matched} or null if not measurable

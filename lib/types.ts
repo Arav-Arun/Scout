@@ -98,7 +98,6 @@ export interface ErrorEvent {
 
 export interface DoneEvent {
   type: "done";
-  sessionId?: string;
 }
 
 // The streaming protocol: a discriminated union keyed on `type`. The client narrows on
@@ -144,7 +143,7 @@ export interface UITurn {
   versionIndex?: number;
 }
 
-/** The return value of runScoutWorkflow — a server-side summary (the answer itself reaches
+/** The return value of runScoutWorkflow - a server-side summary (the answer itself reaches
  *  the UI via emit). `dashboard` is null if the agent clarified or failed; `clarified`
  *  records whether it stopped to ask. */
 export interface AgentResult {

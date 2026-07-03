@@ -1,4 +1,4 @@
-// Column value profiling — schema linking with cell values. The schema tells the analyst
+// Column value profiling - schema linking with cell values. The schema tells the analyst
 // a column exists and the graph tells it how to join, but not what values the column holds.
 // For the categorical (LowCardinality) columns of the retrieved tables, this samples the
 // actual distinct values (most frequent first) so the analyst filters on real values on the
