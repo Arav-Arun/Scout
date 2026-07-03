@@ -19,6 +19,53 @@ who wants answers from crore-row tables without writing SQL by hand.
 
 ---
 
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <b>Ask in plain English, get a complete dashboard</b><br/><br/>
+      <img src="app/assets/img1.jpeg" alt="Ask in plain English, get a complete dashboard" width="100%"/>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <b>Multi-turn follow-ups with versioned dashboards</b><br/><br/>
+      <img src="app/assets/img2.jpeg" alt="Multi-turn follow-ups with versioned dashboards" width="100%"/>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <b>Hero metrics, ECharts, and written insights</b><br/><br/>
+      <img src="app/assets/img3.jpeg" alt="Hero metrics, ECharts, and written insights" width="100%"/>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <b>Export the exact SQL behind every answer</b><br/><br/>
+      <img src="app/assets/img4.jpeg" alt="Export the exact SQL behind every answer" width="100%"/>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <b>Share any analysis as a portable Markdown report</b><br/><br/>
+      <img src="app/assets/img5.jpeg" alt="Share any analysis as a portable Markdown report" width="100%"/>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <b>Graph RAG Lab — visualize the recovered schema graph</b><br/><br/>
+      <img src="app/assets/img6.png" alt="Graph RAG Lab — visualize the recovered schema graph" width="100%"/>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <b>Inspect every join key with live overlap and verdict</b><br/><br/>
+      <img src="app/assets/img7.png" alt="Inspect every join key with live overlap and verdict" width="100%"/>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <b>Test retrieval and probe any two columns</b><br/><br/>
+      <img src="app/assets/img8.png" alt="Test retrieval and probe any two columns" width="100%"/>
+    </td>
+  </tr>
+</table>
+
+---
+
 ## Features
 
 - **Plain-English questions, complete dashboards.** Ask "where is delinquency rising?" or "which
