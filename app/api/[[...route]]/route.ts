@@ -233,6 +233,15 @@ export async function POST(
   if (path === "upload") {
     return withConnection(conn, async () => {
       try {
+        // Check the declared length BEFORE formData() parses: that call buffers the whole
+        // body into memory, so a limit tested afterwards bounds nothing.
+        const declared = Number(request.headers.get("content-length") ?? 0);
+        if (declared > MAX_UPLOAD_BYTES) {
+          return NextResponse.json(
+            { error: `That upload is ${(declared / 1024 / 1024).toFixed(1)} MB; the limit is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.` },
+            { status: 413 },
+          );
+        }
         const form = await request.formData();
         const file = form.get("file");
         if (!(file instanceof File)) {

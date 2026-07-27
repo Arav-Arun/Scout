@@ -39,9 +39,6 @@ export class NotConnectedError extends Error {
   }
 }
 
-export const isNotConnected = (e: unknown): e is NotConnectedError =>
-  e instanceof NotConnectedError || (e instanceof Error && e.name === "NotConnectedError");
-
 const store = new AsyncLocalStorage<Connection>();
 
 /** Run `fn` (and everything it awaits) with `conn` as the active connection. */
@@ -148,19 +145,60 @@ const v4ToInt = (ip: string): number =>
 function isPrivateV4(ip: string): boolean {
   const addr = v4ToInt(ip);
   return PRIVATE_V4.some(({ net, bits }) => {
-    const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+    const mask = (0xffffffff << (32 - bits)) >>> 0;
     return (addr & mask) === (v4ToInt(net) & mask);
   });
 }
 
+/**
+ * Expand an IPv6 literal to its eight 16-bit groups, so ranges can be judged numerically.
+ *
+ * Matching on the text form is not safe here: `new URL()` canonicalizes an address before
+ * we ever see it, rewriting `::ffff:169.254.169.254` as `::ffff:a9fe:a9fe`. A check written
+ * against the dotted-quad spelling therefore never fires on real input, and the embedded
+ * address reaches the network.
+ */
+function v6Groups(ip: string): number[] | null {
+  let a = ip.toLowerCase().split("%")[0]; // strip any zone id
+  if (isIP(a) !== 6) return null;
+
+  // A trailing dotted-quad (::ffff:1.2.3.4) is the low two groups; fold it into hex first.
+  const dotted = a.match(/(\d+\.\d+\.\d+\.\d+)$/);
+  if (dotted) {
+    const o = dotted[1].split(".").map(Number);
+    const hex = `${((o[0] << 8) | o[1]).toString(16)}:${((o[2] << 8) | o[3]).toString(16)}`;
+    a = a.slice(0, -dotted[1].length) + hex;
+  }
+
+  const toGroups = (part: string) =>
+    part ? part.split(":").filter(Boolean).map((g) => parseInt(g, 16)) : [];
+
+  if (!a.includes("::")) {
+    const all = toGroups(a);
+    return all.length === 8 ? all : null;
+  }
+  const [head, tail] = a.split("::");
+  const h = toGroups(head);
+  const t = toGroups(tail);
+  const elided = 8 - h.length - t.length;
+  return elided < 0 ? null : [...h, ...Array(elided).fill(0), ...t];
+}
+
 function isPrivateV6(ip: string): boolean {
-  const a = ip.toLowerCase().split("%")[0]; // strip any zone id
-  if (a === "::1" || a === "::") return true;
-  if (a.startsWith("fe80")) return true; // link-local
-  if (/^f[cd]/.test(a)) return true; // unique-local fc00::/7
-  // IPv4-mapped (::ffff:10.0.0.1) - judge the embedded v4 address.
-  const mapped = a.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  return mapped ? isPrivateV4(mapped[1]) : false;
+  const g = v6Groups(ip);
+  if (!g) return false;
+  const leadingZeros = (n: number) => g.slice(0, n).every((x) => x === 0);
+
+  if ((g[0] & 0xffc0) === 0xfe80) return true; // link-local fe80::/10
+  if ((g[0] & 0xfe00) === 0xfc00) return true; // unique-local fc00::/7
+
+  // Three forms embed an IPv4 address; judge it with the v4 rules rather than trusting the
+  // wrapper. This covers :: and ::1 too, which fall out as 0.0.0.0/8.
+  const embedded = () => `${g[6] >> 8}.${g[6] & 255}.${g[7] >> 8}.${g[7] & 255}`;
+  if (leadingZeros(5) && (g[5] === 0xffff || g[5] === 0)) return isPrivateV4(embedded()); // mapped + compatible
+  // NAT64 well-known prefix 64:ff9b::/96
+  if (g[0] === 0x64 && g[1] === 0xff9b && g.slice(2, 6).every((x) => x === 0)) return isPrivateV4(embedded());
+  return false;
 }
 
 const isPrivateAddress = (ip: string): boolean =>

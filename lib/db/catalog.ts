@@ -52,7 +52,11 @@ export async function getCatalog(): Promise<Catalog> {
 /** Drop the cached catalog for the active connection - call after the warehouse changes
  *  (a file upload adds a table), so the next question sees it. */
 export function invalidateCatalog(): void {
-  _catalogs.delete(connectionKey());
+  const key = connectionKey();
+  _catalogs.delete(key);
+  // Also drop any discovery already in flight: it started before the warehouse changed, so
+  // it would resolve without the new table and then re-cache that stale answer as fresh.
+  _inFlight.delete(key);
 }
 
 /** Drop every cached artefact for a connection (called on disconnect). */

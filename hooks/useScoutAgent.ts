@@ -150,6 +150,12 @@ export function useScoutAgent(onDisconnected?: () => void): ScoutAgent {
           onDisconnected?.();
           throw new Error("Your database link has expired. Reconnect to keep asking questions.");
         }
+        // Any other non-2xx carries an error body, not an NDJSON stream. Without this the
+        // parser silently finds no events and the turn ends blank, with nothing shown.
+        if (!res.ok) {
+          const detail = await res.json().catch(() => null);
+          throw new Error(detail?.error || `The server returned ${res.status}.`);
+        }
         if (!res.body) throw new Error("No response stream");
 
         const reader = res.body.getReader();

@@ -30,12 +30,18 @@ export async function chExec(
   // Without this the statement runs against `default`, not the linked database - the
   // difference only shows up on unqualified table names (ingest.ts).
   params.set("database", database);
-  if (body) params.set("query", query);
+  // `body !== undefined`, not truthiness: an empty payload is still a payload, and treating
+  // it as absent would send the empty string as the whole query.
+  if (body !== undefined) params.set("query", query);
   for (const [k, v] of Object.entries(settings ?? {})) params.set(k, v);
   const res = await fetch(`${url}/?${params.toString()}`, {
     method: "POST",
     headers: { Authorization: auth, "Content-Type": "text/plain" },
     body: body ?? query,
+    // ClickHouse's HTTP interface never legitimately redirects. Following one would let a
+    // visitor's own endpoint bounce this request into the deployment's internal network,
+    // past the connect-time SSRF check - and the error path below echoes the response back.
+    redirect: "error",
   });
   if (!res.ok) {
     const txt = await res.text();

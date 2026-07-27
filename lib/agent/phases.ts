@@ -197,6 +197,15 @@ function checkColumns(sql: string, idx: ColumnIndex, sub: SubGraph): string | nu
  * tables and the full catalog, so we can say "that column lives on table X - query/join X".
  */
 function enrichError(message: string, sql: string, idx: ColumnIndex, sub: SubGraph, cat: Catalog): string {
+  // (0) Too expensive: the query was cancelled at its execution cap. On a large warehouse
+  //     this is the common failure, and neither raw message suggests a cheaper shape - the
+  //     server's names the symptom ("Timeout exceeded: elapsed 30s"), and the client's is a
+  //     bare "Timeout error." with no context at all - so the analyst reliably retries
+  //     something just as expensive. Name the usual causes instead.
+  if (/TIMEOUT_EXCEEDED|TOO_SLOW|Timeout exceeded|Timeout error|estimated query execution time|socket hang up/i.test(message)) {
+    return `${message}  Hint: that query was too expensive to finish. Do NOT retry it unchanged - make it cheaper: filter to a bounded date range, aggregate instead of returning raw rows, drop any join you don't need for the answer, and put a LIMIT on it. Scanning a whole multi-million-row fact table without a WHERE clause will not complete.`;
+  }
+
   // (1) Unknown table: the referenced table isn't in the warehouse at all. Without this the
   //     analyst re-queries the same phantom table until it runs out of attempts.
   const tbl = message.match(/Unknown table expression identifier\s*['"`]?([A-Za-z0-9_.]+)['"`]?/i);

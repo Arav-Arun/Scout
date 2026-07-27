@@ -89,9 +89,12 @@ export function parseJson(buf: Buffer): string[][] {
     throw new Error("No data records found in JSON");
   }
 
-  // Extract all unique keys across all objects to form the headers.
+  // Extract all unique keys across all objects to form the headers. A JSON array may hold
+  // nulls or scalars alongside its objects; Object.keys() would throw on those, surfacing a
+  // raw TypeError as a 500, so skip anything that isn't a plain object.
   const headersSet = new Set<string>();
   for (const obj of objects) {
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) continue;
     for (const key of Object.keys(obj)) {
       headersSet.add(key);
     }
@@ -162,7 +165,10 @@ export function inferSchema(headers: string[], sampleRows: string[][]): Inferred
     }
     used.add(name);
 
-    const lname = header.toLowerCase();
+    // Test the SANITISED name: the guard below separates words on `_`, but a raw header
+    // spells them with spaces or dashes ("Customer ID", "Zip Code"), which would slip
+    // through and get typed numeric - stripping leading zeros and overflowing long ids.
+    const lname = name.toLowerCase();
     const values = sampleRows
       .map((r) => (r[col] ?? "").trim())
       .filter((v) => v !== "" && v.toLowerCase() !== "null" && v !== "\\N");

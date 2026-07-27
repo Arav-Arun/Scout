@@ -73,7 +73,10 @@ function orderByKey(columns: InferredColumn[]): string {
 /** CREATE the destination table from an inferred schema (MergeTree + a sort key). */
 async function createTable(table: string, columns: InferredColumn[]): Promise<void> {
   const colDefs = columns.map((c) => `\`${c.name}\` ${c.type}`).join(",\n  ");
-  await chExec(`CREATE TABLE ${qualified(table)} (\n  ${colDefs}\n) ENGINE = MergeTree ORDER BY ${orderByKey(columns)}`);
+  // IF NOT EXISTS: an ingest that created the table and then failed to insert leaves an
+  // empty table behind, and the name is deterministic (filename + content hash) - so without
+  // this, retrying the same upload fails forever on "table already exists".
+  await chExec(`CREATE TABLE IF NOT EXISTS ${qualified(table)} (\n  ${colDefs}\n) ENGINE = MergeTree ORDER BY ${orderByKey(columns)}`);
 }
 
 /**

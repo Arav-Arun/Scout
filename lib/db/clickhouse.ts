@@ -20,7 +20,36 @@ const _clients = new Map<string, ClickHouseClient>();
 /** Ceiling on the setup tour's connection test (see pingConnection). */
 const PING_TIMEOUT_MS = 25_000;
 
-function buildClient(conn: Connection, requestTimeoutMs = 120_000): ClickHouseClient {
+/**
+ * Server-side ceiling on a single analytical query.
+ *
+ * The agent writes its own SQL, so a question can turn into an unfiltered aggregate over a
+ * 60M-row fact table or a join that fans out. ClickHouse's defaults handle that badly:
+ * `max_execution_time` is 0 (unlimited) and `cancel_http_readonly_queries_on_client_close`
+ * is 0. Without a server cap the CLIENT times out first, which is the worst outcome - the
+ * error says only "timeout" with nothing the model can act on, AND the abandoned query keeps
+ * running, so every later query on the instance competes with work nobody is waiting for.
+ * Capping server-side means ClickHouse gives up first and says why.
+ *
+ * 30s is generous for an aggregate over hundreds of millions of rows; a query that exceeds
+ * it is nearly always malformed rather than merely big. Callers may pass a tighter value
+ * (the graph-verification probes use 12s).
+ */
+const QUERY_TIMEOUT_S = 30;
+
+/** Whether this connection may tune per-query settings at all.
+ *
+ * `readonly=2` (our normal mode) permits it; a user already pinned to `readonly=1`
+ * SERVER-side rejects any settings change outright with `Cannot modify '<x>' setting in
+ * readonly mode` - which would fail every query that tried to cap itself. Such a server
+ * enforces its own limits anyway, so the correct move is to send no settings at all. */
+export function canTuneSettings(): boolean {
+  return !currentConnection().readonlyLocked;
+}
+
+// Kept comfortably above QUERY_TIMEOUT_S so the server wins the race and returns a real
+// error. It is a backstop for the readonly-pinned case, where we cannot cap server-side.
+function buildClient(conn: Connection, requestTimeoutMs = 60_000): ClickHouseClient {
   return createClient({
     url: conn.url,
     username: conn.username || "default",
@@ -34,14 +63,28 @@ function buildClient(conn: Connection, requestTimeoutMs = 120_000): ClickHouseCl
     // settings, but blocks any write/DDL at the server. Omitted when the user is already
     // pinned read-only server-side, because such a server refuses the settings change and
     // would fail every query - and its own readonly is at least as strict anyway.
-    clickhouse_settings: conn.readonlyLocked ? undefined : { readonly: "2" },
+    clickhouse_settings: conn.readonlyLocked
+      ? undefined
+      : {
+          readonly: "2",
+          // Stop a query as soon as nobody is waiting for it. Off by default in ClickHouse,
+          // which means an abandoned query runs to completion and steals CPU from the next
+          // one - the reason a single slow query makes an entire session progressively slower.
+          cancel_http_readonly_queries_on_client_close: 1,
+        },
   });
 }
 
-/** The pooled ClickHouse client for the active connection. */
+/** The pooled ClickHouse client for the active connection.
+ *
+ *  Keyed by connection AND readonly mode: `readonlyLocked` changes the settings baked into
+ *  the client at construction, so the two variants are not interchangeable. Sharing one
+ *  entry would hand a pinned server a client that still sends `readonly=2`, failing every
+ *  query on it. `connectionKey()` alone can't carry this - it deliberately identifies the
+ *  warehouse (so caches survive a credential change), not how we talk to it. */
 export function getClient(): ClickHouseClient {
   const conn = currentConnection();
-  const k = connectionKey(conn);
+  const k = `${connectionKey(conn)}:${conn.readonlyLocked ? "ro" : "rw"}`;
   const hit = _clients.get(k);
   if (hit) return hit;
 
@@ -59,11 +102,15 @@ export function getClient(): ClickHouseClient {
   return client;
 }
 
-/** Drop the pooled client for a connection (called on disconnect). */
+/** Drop the pooled client for a connection (called on disconnect). Releases both readonly
+ *  variants: which one is live depends on what the server turned out to allow at link time,
+ *  and leaving the other behind would keep a socket open past the visitor's disconnect. */
 export function releaseClient(conn: Connection): void {
-  const k = connectionKey(conn);
-  _clients.get(k)?.close().catch(() => {});
-  _clients.delete(k);
+  const base = connectionKey(conn);
+  for (const k of [`${base}:ro`, `${base}:rw`]) {
+    _clients.get(k)?.close().catch(() => {});
+    _clients.delete(k);
+  }
 }
 
 /** ClickHouse's refusal when the user is already pinned read-only and we try to set readonly=2. */
@@ -72,7 +119,7 @@ const READONLY_LOCKED = /cannot modify ['"]?readonly['"]? setting/i;
 /** One trivial query on a throwaway client. Returns the server version, or throws. */
 async function tryPing(conn: Connection): Promise<string> {
   // Short timeout: a typo in the host should come back in seconds, not after the analytics
-  // client's two-minute ceiling. Long enough that an idle Cloud service still has time to wake.
+  // client's full ceiling. Long enough that an idle Cloud service still has time to wake.
   const client = buildClient(conn, PING_TIMEOUT_MS);
   try {
     const rs = await client.query({ query: "SELECT version() AS v", format: "JSON" });
@@ -122,6 +169,12 @@ export function assertReadOnly(sql: string): void {
   if (!/^(SELECT|WITH|DESCRIBE|DESC|SHOW|EXPLAIN)\b/i.test(head)) {
     throw new Error("Only SELECT / WITH / DESCRIBE / SHOW / EXPLAIN queries are allowed");
   }
+  // A query-level SETTINGS clause outranks the ones the client sends, so it could lift the
+  // execution cap runSelect relies on. The agent has no legitimate need to tune the server.
+  // The lookbehind keeps `system.settings` queryable - it is only the clause we reject.
+  if (/(?<![.\w])SETTINGS\s+\w+\s*=/i.test(trimmed)) {
+    throw new Error("A SETTINGS clause is not allowed - the server's own query limits apply");
+  }
 }
 
 export interface QueryResult {
@@ -138,9 +191,14 @@ export async function runSelect(
 ): Promise<QueryResult> {
   assertReadOnly(sql);
   const started = Date.now();
-  // Per-query settings (e.g. a max_execution_time cap for the graph-verification probes)
-  // are allowed under readonly=2; they merge over the client's defaults.
-  const rs = await getClient().query({ query: sql, format: "JSON", clickhouse_settings: opts?.settings });
+  // Every read is capped server-side so a runaway query fails fast and legibly instead of
+  // hanging until the client gives up. A caller may tighten the cap (never loosen it past
+  // the client's request_timeout, or the client would time out first and lose the message).
+  // A read-only-pinned server rejects settings changes outright, so it gets none.
+  const settings = canTuneSettings()
+    ? { max_execution_time: QUERY_TIMEOUT_S, ...opts?.settings }
+    : undefined;
+  const rs = await getClient().query({ query: sql, format: "JSON", clickhouse_settings: settings });
   const json = (await rs.json()) as {
     meta?: { name: string; type: string }[];
     data?: Record<string, unknown>[];
