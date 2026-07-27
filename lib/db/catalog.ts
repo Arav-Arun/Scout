@@ -1,9 +1,13 @@
 // Warehouse catalog - an in-memory map of every table's columns plus a free
 // row-count estimate, discovered once and refreshed lazily after CATALOG_TTL_MS.
 // Stateless data access (client, runSelect, describeTable) lives in clickhouse.ts.
+//
+// Everything here is partitioned by connection: two visitors with two different ClickHouse
+// databases share this process but never share a catalog.
 
 import { runSelect, dbName, type TableInfo } from "./clickhouse";
-import { isMetaTable } from "../graph/relationships";
+import { connectionKey } from "./connection";
+import { deriveHeuristics, isMetaTable } from "../graph/relationships";
 
 /** The warehouse, mapped once: every table's columns plus a free row-count estimate. */
 export interface Catalog {
@@ -14,35 +18,52 @@ export interface Catalog {
   discoveredAt: number;
 }
 
-let _catalog: Catalog | null = null;
-let _catalogInFlight: Promise<Catalog> | null = null;
+const _catalogs = new Map<string, Catalog>();
+const _inFlight = new Map<string, Promise<Catalog>>();
 const CATALOG_TTL_MS = 5 * 60_000; // re-map the warehouse at most every 5 minutes
 
 /**
- * Return the cached warehouse catalog, discovering it on first use and refreshing lazily
- * after CATALOG_TTL_MS. Concurrent callers share a single in-flight discovery.
+ * Return the cached warehouse catalog for the active connection, discovering it on first use
+ * and refreshing lazily after CATALOG_TTL_MS. Concurrent callers share a single in-flight
+ * discovery.
  */
 export async function getCatalog(): Promise<Catalog> {
-  const fresh = _catalog && Date.now() - _catalog.discoveredAt < CATALOG_TTL_MS;
-  if (fresh) return _catalog!;
-  if (_catalogInFlight) return _catalogInFlight;
+  const key = connectionKey();
+  const cached = _catalogs.get(key);
+  if (cached && Date.now() - cached.discoveredAt < CATALOG_TTL_MS) return cached;
 
-  _catalogInFlight = discoverCatalog()
+  const pending = _inFlight.get(key);
+  if (pending) return pending;
+
+  const discovery = discoverCatalog()
     .then((c) => {
-      _catalog = c;
-      _catalogInFlight = null;
+      _catalogs.set(key, c);
+      _inFlight.delete(key);
       return c;
     })
     .catch((e) => {
-      _catalogInFlight = null;
+      _inFlight.delete(key);
       throw e;
     });
-  return _catalogInFlight;
+  _inFlight.set(key, discovery);
+  return discovery;
+}
+
+/** Drop the cached catalog for the active connection - call after the warehouse changes
+ *  (a file upload adds a table), so the next question sees it. */
+export function invalidateCatalog(): void {
+  _catalogs.delete(connectionKey());
+}
+
+/** Drop every cached artefact for a connection (called on disconnect). */
+export function forgetCatalog(key: string): void {
+  _catalogs.delete(key);
+  _inFlight.delete(key);
 }
 
 /** List every table in the database with its column names + types. */
 async function listTables(): Promise<TableInfo[]> {
-  const db = dbName();
+  const db = dbName().replace(/'/g, "''");
   const res = await runSelect(
     `SELECT table, name, type
      FROM system.columns
@@ -67,7 +88,7 @@ async function discoverCatalog(): Promise<Catalog> {
   try {
     // system.tables.total_rows is MergeTree metadata, not a data scan, so this stays
     // instant on very large tables.
-    const db = dbName();
+    const db = dbName().replace(/'/g, "''");
     const res = await runSelect(
       `SELECT name, total_rows FROM system.tables WHERE database = '${db}'`,
     );
@@ -75,5 +96,8 @@ async function discoverCatalog(): Promise<Catalog> {
   } catch {
     // Row counts are best-effort context; a failure here must not block analysis.
   }
+  // Re-derive this schema's naming conventions (key ownership, hub columns, domains) - the
+  // graph layer reads them synchronously from here on.
+  deriveHeuristics(tables, rowCounts);
   return { tables, rowCounts, discoveredAt: Date.now() };
 }

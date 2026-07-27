@@ -57,6 +57,66 @@ export const PanelLeftIcon = ({ className }: P) => (
   </svg>
 );
 
+export const PaperclipIcon = ({ className }: P) => (
+  <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden>
+    <path
+      d="M13 7.2l-5.6 5.6a3 3 0 0 1-4.24-4.24l6-6a2 2 0 0 1 2.83 2.83l-5.65 5.65a1 1 0 0 1-1.42-1.42L9.7 5"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
+export const ArrowRightIcon = ({ className }: P) => (
+  <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden>
+    <path d="M6 4l4 4-4 4M10 8H3.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+export const ExternalLinkIcon = ({ className }: P) => (
+  <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden>
+    <path d="M9.5 3H13v3.5M12.8 3.2L7.5 8.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M12 10v2.5a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 2 12.5v-7A1.5 1.5 0 0 1 3.5 4H6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+export const EyeIcon = ({ className }: P) => (
+  <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden>
+    <path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+    <circle cx="8" cy="8" r="2" stroke="currentColor" strokeWidth="1.4" />
+  </svg>
+);
+
+export const EyeOffIcon = ({ className }: P) => (
+  <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden>
+    <path d="M6.3 4a6.4 6.4 0 0 1 1.7-.2c4 0 6.5 4.2 6.5 4.2a12 12 0 0 1-2 2.4M4.2 5.3A11.9 11.9 0 0 0 1.5 8s2.5 4.5 6.5 4.5c1 0 1.9-.2 2.7-.6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M2 2l12 12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+  </svg>
+);
+
+export const PlugIcon = ({ className }: P) => (
+  <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden>
+    <path d="M6.5 1.5v3M9.5 1.5v3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    <path d="M4 4.5h8v2.2A3.8 3.8 0 0 1 8.2 10.5h-.4A3.8 3.8 0 0 1 4 6.7V4.5z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+    <path d="M8 10.5v4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+  </svg>
+);
+
+export const ShieldIcon = ({ className }: P) => (
+  <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden>
+    <path d="M8 1.6l5 1.8v4.2c0 3-2.1 5.4-5 6.8-2.9-1.4-5-3.8-5-6.8V3.4l5-1.8z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+    <path d="M5.8 7.9l1.6 1.6 3-3.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+export const CloseIcon = ({ className }: P) => (
+  <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden>
+    <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+  </svg>
+);
+
 export const GearIcon = ({ className }: P) => (
   <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden>
     <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.75" />

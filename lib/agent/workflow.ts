@@ -24,7 +24,7 @@ export async function runScoutWorkflow(
   const cat = await discover(emit);
   if (!cat) return noDashboard();
   if (!cat.tables.length) {
-    emit({ type: "text", delta: "The warehouse has no tables yet. Point Scout at a populated ClickHouse database, then ask again." });
+    emit({ type: "text", delta: "This database has no tables yet. Attach a CSV, Excel or JSON file with the paperclip to load one in, or connect a database that already has data." });
     return noDashboard();
   }
 

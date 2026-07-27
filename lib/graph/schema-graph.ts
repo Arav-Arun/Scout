@@ -8,7 +8,8 @@
 
 import { getCatalog, type Catalog } from "../db/catalog";
 import { runSelect, type TableInfo } from "../db/clickhouse";
-import { inferRelationships, HUB_COLUMNS, isMetaTable, type Relationship } from "./relationships";
+import { connectionKey } from "../db/connection";
+import { inferRelationships, isHubColumn, isMetaTable, type Relationship } from "./relationships";
 import { loadUserEdges } from "./user-edges";
 import { loadStoredGraph, persistSchemaGraph } from "./persist";
 
@@ -49,9 +50,10 @@ export interface SubGraph {
 
 // Helpers shared across the file.
 const other = (e: GraphEdge, n: string) => (e.a === n ? e.b : e.a);
-/** A hub edge joins on a column that lives in many tables (customer_id, city). Routing a
- *  bridge through one would link two unrelated tables just because both carry that column. */
-const isHubEdge = (e: GraphEdge) => HUB_COLUMNS.has(e.aCol) || HUB_COLUMNS.has(e.bCol);
+/** A hub edge joins on a column that lives in many tables (a `customer_id` half the warehouse
+ *  carries). Routing a bridge through one would link two unrelated tables just because both
+ *  carry that column. Which columns count as hubs is derived per schema (relationships.ts). */
+const isHubEdge = (e: GraphEdge) => isHubColumn(e.aCol) || isHubColumn(e.bCol);
 
 // ── 1 · BUILD ────────────────────────────────────────────────────────────────
 
@@ -119,7 +121,8 @@ const VERIFY_CONCURRENCY = 8;
 const VERIFY_TTL_MS = 30 * 60_000;
 
 const _overlapCache = new Map<string, { overlap: number; at: number }>();
-const edgeSig = (e: GraphEdge) => `${e.a}.${e.aCol}~${e.b}.${e.bCol}`;
+// Namespaced by connection: the same table pair means something different in someone else's warehouse.
+const edgeSig = (e: GraphEdge) => `${connectionKey()}\u0000${e.a}.${e.aCol}~${e.b}.${e.bCol}`;
 
 /** Exact counts behind an overlap measurement, so the number is auditable: `matched` of
  *  `sampled` distinct child keys resolve to a parent key. `overlap` = matched / sampled. */
@@ -207,10 +210,33 @@ async function verifyEdges(graph: SchemaGraph): Promise<void> {
 // recompute it. A small in-memory hot cache (keyed by catalog timestamp) is a read-through
 // of the store, refreshed cheaply when the catalog rolls over.
 
-let _graph: SchemaGraph | null = null;
-let _graphCatalogAt = 0;
-let _reading: Promise<SchemaGraph> | null = null;
-let _readingForAt = 0;
+/** The hot-cache slot for one connection. */
+interface GraphSlot {
+  graph: SchemaGraph | null;
+  catalogAt: number;
+  reading: Promise<SchemaGraph> | null;
+  readingForAt: number;
+}
+
+const _slots = new Map<string, GraphSlot>();
+
+function slot(): GraphSlot {
+  const key = connectionKey();
+  let s = _slots.get(key);
+  if (!s) {
+    s = { graph: null, catalogAt: 0, reading: null, readingForAt: 0 };
+    _slots.set(key, s);
+  }
+  return s;
+}
+
+/** Drop the cached graph for a connection (called on disconnect). */
+export function forgetSchemaGraph(key: string): void {
+  _slots.delete(key);
+  for (const k of _overlapCache.keys()) {
+    if (k.startsWith(`${key}\u0000`)) _overlapCache.delete(k);
+  }
+}
 
 /**
  * Build the schema graph from scratch and store it as the single canonical graph: load the
@@ -230,10 +256,12 @@ export async function materializeSchemaGraph(): Promise<SchemaGraph> {
   try {
     await persistSchemaGraph(g);
   } catch {
-    // Persistence is best-effort: the graph is still valid in memory for this process.
+    // Persistence is best-effort: a read-only ClickHouse user can't write the snapshot, and
+    // the graph is still valid in memory for this process.
   }
-  _graph = g;
-  _graphCatalogAt = cat.discoveredAt;
+  const s = slot();
+  s.graph = g;
+  s.catalogAt = cat.discoveredAt;
   return g;
 }
 
@@ -245,22 +273,23 @@ export async function materializeSchemaGraph(): Promise<SchemaGraph> {
  */
 export async function getSchemaGraph(): Promise<SchemaGraph> {
   const cat = await getCatalog();
-  if (_graph && _graphCatalogAt === cat.discoveredAt) return _graph;
-  if (_reading && _readingForAt === cat.discoveredAt) return _reading;
+  const s = slot();
+  if (s.graph && s.catalogAt === cat.discoveredAt) return s.graph;
+  if (s.reading && s.readingForAt === cat.discoveredAt) return s.reading;
 
-  _readingForAt = cat.discoveredAt;
-  _reading = (async () => {
+  s.readingForAt = cat.discoveredAt;
+  s.reading = (async () => {
     try {
       const stored = await loadStoredGraph(cat);
       const g = stored ?? (await materializeSchemaGraph()); // empty store: materialize once
-      _graph = g;
-      _graphCatalogAt = cat.discoveredAt;
+      s.graph = g;
+      s.catalogAt = cat.discoveredAt;
       return g;
     } finally {
-      _reading = null;
+      s.reading = null;
     }
   })();
-  return _reading;
+  return s.reading;
 }
 
 // ── 3 · RETRIEVE ──────────────────────────────────────────────────────────────

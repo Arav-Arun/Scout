@@ -17,6 +17,8 @@ interface GNode { id: string; rowCount: number; cols: number; columns: string[];
 interface GEdge {
   a: string; b: string; aCol: string; bCol: string; label: string;
   source: Source; connection?: Connection; overlap?: number; verified?: boolean; status: Status;
+  /** Joins on a column carried by much of the schema; the canvas draws these faintly. */
+  hub?: boolean;
 }
 interface GraphData { nodes: GNode[]; edges: GEdge[]; dropped: GEdge[] }
 /** The auditable overlap probe: `matched` of `sampled` distinct child keys resolve to the parent. */
@@ -41,14 +43,22 @@ const pct = (o?: number) => (o === undefined || o === null ? "-" : `${Math.round
 export default function GraphLabPage() {
   const [data, setData] = useState<GraphData | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // The Lab has nothing to show until a warehouse is linked - the setup tour lives on "/".
+  const [notConnected, setNotConnected] = useState(false);
   const [tab, setTab] = useState<"visualize" | "inspect" | "test" | "edges">("visualize");
   // When editing from the Inspect tab, the edge to pre-fill the Add-relationship form with.
   const [editTarget, setEditTarget] = useState<GEdge | null>(null);
 
   const load = useCallback(() => {
     fetch("/api/graph")
-      .then((r) => r.json())
-      .then((d) => (d.error ? setErr(d.error) : (setData(d), setErr(null))))
+      .then(async (r) => ({ status: r.status, body: await r.json() }))
+      .then(({ status, body }) => {
+        if (status === 428) return setNotConnected(true);
+        if (body.error) return setErr(body.error);
+        setData(body);
+        setErr(null);
+        setNotConnected(false);
+      })
       .catch((e) => setErr(String(e)));
   }, []);
   useEffect(() => load(), [load]);
@@ -84,8 +94,23 @@ export default function GraphLabPage() {
           </div>
         </div>
 
-        {err && <div className="mt-6 rounded-xl border border-red-500/30 bg-red-500/5 p-4 text-[13px] text-red-500">Couldn’t load the graph: {err}</div>}
-        {!err && !data && <div className="mt-10 text-center text-[13px] text-ink-faint">Building the graph…</div>}
+        {notConnected && (
+          <div className="mt-10 flex flex-col items-center gap-4 rounded-2xl border border-line bg-black/[0.02] px-6 py-12 text-center dark:bg-white/[0.03]">
+            <h2 className="text-[16px] font-bold text-ink">No warehouse linked yet</h2>
+            <p className="max-w-md text-[13px] leading-relaxed text-ink-faint">
+              The Lab shows the join keys Scout recovered from your schema, so it needs a ClickHouse
+              connection first.
+            </p>
+            <a
+              href="/"
+              className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-[13px] font-bold text-white shadow-sm transition-all hover:brightness-105 active:scale-[0.98]"
+            >
+              Connect a database
+            </a>
+          </div>
+        )}
+        {!notConnected && err && <div className="mt-6 rounded-xl border border-red-500/30 bg-red-500/5 p-4 text-[13px] text-red-500">Couldn’t load the graph: {err}</div>}
+        {!notConnected && !err && !data && <div className="mt-10 text-center text-[13px] text-ink-faint">Building the graph…</div>}
 
         {data && stats && (
           <>

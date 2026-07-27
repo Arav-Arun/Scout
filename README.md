@@ -13,9 +13,13 @@ the result**, all at runtime, streamed live to a dashboard.
                      └──▶ Dashboard panel ..... hero metrics · ECharts · insights · Export SQL
 ```
 
-Built for data and analytics teams in **banking, fintech, and any organization running large
-analytical warehouses**: portfolio analysts, risk and collections teams, BI engineers, and anyone
-who wants answers from crore-row tables without writing SQL by hand.
+Scout ships with no warehouse of its own. Every visitor links **their own** ClickHouse through a
+guided setup, and Scout works out that schema's conventions at runtime: it has no built-in
+knowledge of any particular industry, table layout, or naming scheme. Anything not in the
+warehouse yet can be attached as a CSV, Excel or JSON file and becomes a real, joinable table.
+
+Built for anyone running an analytical warehouse - analysts, BI engineers, and teams who want
+answers from very large tables without writing SQL by hand.
 
 ---
 
@@ -90,7 +94,12 @@ who wants answers from crore-row tables without writing SQL by hand.
 - **The Graph RAG Lab.** An in-app workbench (`/graph`) to visualize the recovered schema graph,
   inspect every join key with its live overlap and verdict, test retrieval, probe any two columns,
   and declare the aliased relationships automatic inference can't see.
-- **Simple to operate.** One Node.js service, five environment variables, a `/health` liveness
+- **Bring your own warehouse.** A four-step in-app tour collects the connection, tests it against
+  the live server, and remembers it. Credentials are sealed server-side into an httpOnly cookie
+  (AES-256-GCM), so the deployment holds no connection state and two visitors never share one.
+- **Attach what isn't in the warehouse.** The composer's paperclip loads a CSV, TSV, Excel or JSON
+  file straight into the linked database as a typed MergeTree table, joinable with everything else.
+- **Simple to operate.** One Node.js service, two environment variables, a `/health` liveness
   endpoint, and a streaming NDJSON API. Deploys anywhere Node runs.
 
 ---
@@ -100,9 +109,9 @@ who wants answers from crore-row tables without writing SQL by hand.
 ### 1. Prerequisites
 
 - **Node.js 18.18+** (20+ recommended)
-- A **ClickHouse** instance you can reach over HTTP(S): ClickHouse Cloud or self-hosted, with
-  the database you want to analyze already populated
 - An **OpenAI API key**
+- A **ClickHouse** instance reachable over HTTP(S) - ClickHouse Cloud or self-hosted. You link it
+  from inside the app, not from a config file, so you don't need it to hand before starting.
 
 ### 2. Install
 
@@ -112,29 +121,30 @@ cd Scout
 npm install
 ```
 
-### 3. Configure the connection
+### 3. Configure the server
+
+Scout takes no warehouse configuration: there is no `CLICKHOUSE_HOST` to set. The only
+environment variables belong to the server itself.
 
 ```bash
 cp .env.example .env
 ```
 
-Fill in `.env`:
+| Variable                     | What to put there                                                                                     |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `OPENAI_API_KEY`             | Powers the planner / analyst / synthesizer LLM calls                                                    |
+| `SCOUT_SECRET`               | **Required in production.** Seals each visitor's saved connection into their cookie. Any long random string |
+| `OPENAI_MODEL`               | Optional. Defaults to `gpt-4o`                                                                          |
+| `SCOUT_ALLOW_PRIVATE_HOSTS`  | Optional. Set to `1` to allow linking a ClickHouse on `localhost` or a private network                  |
 
-| Variable              | What to put there                                                                                              |
-| --------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `CLICKHOUSE_HOST`     | Full HTTP(S) URL incl. port, e.g. `https://your-instance.region.aws.clickhouse.cloud:8443` or `http://localhost:8123` |
-| `CLICKHOUSE_USER`     | ClickHouse user (a read-only user is enough for analysis)                                                        |
-| `CLICKHOUSE_PASSWORD` | That user's password                                                                                             |
-| `CLICKHOUSE_DATABASE` | The database Scout should analyze (defaults to `default`)                                                        |
-| `OPENAI_API_KEY`      | Powers the planner / analyst / synthesizer LLM calls                                                             |
-| `OPENAI_MODEL`        | Optional. Defaults to `gpt-4o`                                                                                   |
+Generate a secret with:
 
-**Permissions:** Scout only ever runs `SELECT` against your data, enforced in code and at the
-session level. Granting the user `CREATE` / `INSERT` on the configured database is optional: it
-lets Scout persist its schema-graph snapshot and your manually declared relationships in three
-small bookkeeping tables (`scout_schema_graph_edges`, `scout_schema_graph_nodes`,
-`scout_user_edges`). With a strictly read-only user, analysis still works end to end; the graph
-is simply kept in memory and manual edges can't be saved.
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+```
+
+Without `SCOUT_SECRET`, Scout falls back to a per-process key and every restart forces visitors
+to re-link their database.
 
 ### 4. Run
 
@@ -147,16 +157,51 @@ npm run build      # production
 npm start
 ```
 
-Open the app, and ask a question. Scout discovers your schema on the first question and caches
-it; no schema registration, config files, or annotations are needed.
+Open the app and a four-step tour walks you through linking a ClickHouse: what Scout is about to
+do, where to find your connection details, the form itself (tested live against the server before
+anything is saved), and a confirmation naming the database and the tables it found. From then on
+the link is remembered until you disconnect from **Settings → Warehouse Connection**.
 
-**Note for ClickHouse Cloud:** if your instance idles, the very first question after a quiet
-period can take extra time while the instance wakes. Subsequent questions are fast.
+Scout discovers your schema on the first question and caches it; no schema registration, config
+files, or annotations are needed.
 
-### 5. Deploy
+**Note for ClickHouse Cloud:** if your instance idles, the very first request after a quiet period
+can take extra time while the instance wakes. Subsequent questions are fast.
+
+### 5. Connecting and permissions
+
+Scout only ever runs `SELECT` against your data, enforced in code (a leading-keyword allowlist
+that also rejects stacked statements) and again at the session level. **A read-only ClickHouse
+user is enough** - including one already pinned `readonly=1` server-side, which Scout detects
+during the connection test and adapts to.
+
+Granting that user `CREATE TABLE` / `INSERT` on the linked database unlocks two optional things:
+
+- **Attaching files.** The paperclip in the composer loads a CSV, TSV, Excel or JSON file into the
+  database as a typed MergeTree table (named `upload_<file>_<contenthash>`, so re-attaching the
+  same file is a no-op rather than a duplicate), and Scout profiles it immediately.
+- **Persisting the graph.** The schema-graph snapshot and your manually declared relationships are
+  stored in three small bookkeeping tables (`scout_schema_graph_edges`, `scout_schema_graph_nodes`,
+  `scout_user_edges`).
+
+With a strictly read-only user, analysis still works end to end; the graph is simply kept in
+memory, manual edges can't be saved, and attaching a file reports the missing grant.
+
+**How the link is stored.** Credentials are encrypted server-side with AES-256-GCM and handed to
+the browser as an opaque, `httpOnly` cookie, so page scripts can never read them and the server
+keeps no connection state of its own. Each browser is independent, which is what lets one
+deployment serve many people without any of them sharing a warehouse.
+
+**Where Scout will refuse to connect.** Because the server makes the outbound request, an
+arbitrary host is a server-side request forgery vector. Scout resolves the hostname and refuses
+private, loopback and link-local addresses (including cloud metadata endpoints) unless the
+operator sets `SCOUT_ALLOW_PRIVATE_HOSTS=1`. Note this checks the resolved addresses rather than
+pinning them, so it does not defeat a determined DNS-rebinding attacker.
+
+### 6. Deploy
 
 Scout is a standard Next.js app and runs on any Node host (it is deployed on Railway in
-production). Set the same environment variables on the host. `GET /health` is provided as a
+production). Set `OPENAI_API_KEY` and `SCOUT_SECRET` on the host. `GET /health` is provided as a
 liveness probe. On serverless platforms, note that an analysis streams for up to a few minutes;
 the API route declares `maxDuration = 300`.
 
@@ -176,6 +221,15 @@ the API route declares `maxDuration = 300`.
   `card_transactions.merchant` joins `merchants.merchant_name`), declare that edge once in the
   Lab: it is verified against your live data on the spot, persisted, and used by every question
   from then on.
+- **Bring in what isn't there yet.** The paperclip in the composer takes a `.csv`, `.tsv`,
+  `.xlsx`, `.xls`, `.json`, `.jsonl` or `.ndjson` file (up to 100 MB), infers a ClickHouse schema
+  from a 500-row sample, creates a MergeTree table in your linked database, bulk-loads it, and
+  immediately profiles it. The table name carries a content hash, so re-attaching the same file
+  reuses the existing table instead of duplicating it.
+- **Swap or unlink the warehouse.** **Settings → Warehouse Connection** shows what you're
+  connected to, with **Change** to point Scout somewhere else and **Disconnect** to make it
+  forget. Disconnecting clears the conversation too, since dashboards belong to the warehouse
+  that produced them.
 
 ---
 
@@ -284,9 +338,11 @@ A shared _name_, meanwhile, doesn't prove a join either: `account_transactions.t
 `card_transactions.txn_id` share a name but have **zero** overlapping values. Scout has to tell
 the real relationships from the coincidental ones from the data, not the schema.
 
-## 2 · The reference warehouse
+## 2 · A worked example schema
 
-32 tables across eight sub-domains, linked by shared (often aliased) keys, never by FKs:
+Scout ships with no warehouse and no built-in knowledge of any schema. The walkthrough below uses
+one concrete example throughout - a 32-table retail-banking warehouse, linked by shared (often
+aliased) keys and never by FKs - purely so the mechanics have something to bite on:
 
 | Sub-domain         | Tables                                                                                                   |
 | ------------------ | -------------------------------------------------------------------------------------------------------- |
@@ -299,8 +355,10 @@ the real relationships from the coincidental ones from the data, not the schema.
 | Merchants          | `merchants`, `merchant_categories`                                                                       |
 | Engagement         | `app_sessions`, `support_tickets`, `marketing_campaigns`, `campaign_responses`                           |
 
-Scout is not tied to this schema: point it at any populated ClickHouse database and it discovers
-the catalog, recovers the join graph, and answers from there.
+**None of this is configured anywhere.** Point Scout at any populated ClickHouse and it derives
+that schema's conventions from the catalog on connect - which table owns each key, which columns
+are hubs, how tables cluster into the sub-domains the graph viewer colours by - then recovers and
+verifies the join graph and answers from there.
 
 ---
 
@@ -347,10 +405,18 @@ flowchart LR
 The graph has no FK metadata to start from, so every edge comes from one of two sources surfaced
 in the UI as its **connection** kind:
 
-- **Physical** _(inferred)_ - recovered purely from the catalog: any key-like column (`*_id`, or a
-  known join column in `PARENT_OF_COLUMN`) that exists both on a table and on its **canonical
-  parent** becomes an edge. Zero configuration, recomputed from the live schema, so it stays
-  correct as tables change. This is the automatic backbone of the graph.
+- **Physical** _(inferred)_ - recovered purely from the catalog. A key-like column (`*_id`,
+  `*_key`, `*_code`, …) belongs to the table whose name **is** that column's stem, compared
+  ignoring case, separators and plurality: `customer_id → customers`,
+  `merchant_category → merchant_categories`. Where that table also exposes the column, the pair
+  becomes an edge. Deliberately conservative - no name match means **no edge**, because guessing a
+  parent wires up joins that don't exist. Zero configuration, recomputed from the live schema, so
+  it stays correct as tables change. This is the automatic backbone of the graph.
+
+  Two more conventions come from the same pass ([`deriveHeuristics`](lib/graph/relationships.ts)):
+  **hub columns** (carried by a quarter of the warehouse, so traversal penalises them and one
+  question doesn't drag in the whole schema) and **sub-domains** (tables clustered on a shared
+  leading token, which is what the graph viewer colours by).
 - **Manual** _(declared)_ - human-asserted edges managed in the **Graph RAG Lab** and stored in
   `scout_user_edges`. The store **starts empty**; you declare the edges inference can't see -
   the **aliased** keys (`card_transactions.merchant → merchants.merchant_name`) - and they become
@@ -451,10 +517,14 @@ app/
   page.tsx                    UI shell (state lives in hooks/useScoutAgent.ts)
   graph/page.tsx              Graph RAG Lab (Visualize / Inspect / Test / Declare)
   health/route.ts             GET /health liveness probe
-  api/[[...route]]/route.ts   API router: GET db-info · graph ; POST chat · graph/probe·retrieve·edge
+  api/[[...route]]/route.ts   API router: GET db-info · graph ; POST connect · disconnect · chat ·
+                              upload · graph/probe·retrieve·edge
 components/                   ChatPanel · DashboardPanel + EChart · GraphCanvas (SVG graph viewer) · icons
+  ConnectTour.tsx             the 4-step guided setup shown until a warehouse is linked
   components.css              hand-written component styles (the rest is Tailwind utilities)
-hooks/useScoutAgent.ts        client state: turns, dashboard versions, NDJSON streaming
+hooks/
+  useScoutAgent.ts            client state: turns, dashboard versions, NDJSON streaming, file upload
+  useConnection.ts            link status + connect / disconnect (never holds the credentials)
 lib/
   types.ts                    shared contract: streaming events + dashboard shape
   agent/                      ── AGENT ──
@@ -464,13 +534,17 @@ lib/
     prompts.ts                all LLM system prompts
     llm.ts                    OpenAI client wrapper (llmJSON)
   graph/                      ── GRAPH RAG ──
-    relationships.ts          physical (inferred) edges + hub/parent/domain metadata
+    relationships.ts          physical (inferred) edges + per-schema hub/parent/domain derivation
     user-edges.ts             manual (declared) edge store: scout_user_edges
     schema-graph.ts           materialize (build → verify → persist) · get (read) · retrieve · format
     persist.ts                single canonical graph snapshot → scout_schema_graph_edges/_nodes
   db/                         ── CLICKHOUSE ──
-    clickhouse.ts             read-only query layer (runSelect / describeTable)
-    catalog.ts                cached warehouse catalog
+    connection.ts             the per-request connection (AsyncLocalStorage) · host normalization · SSRF guard
+    session.ts                seals / opens the connection cookie (AES-256-GCM)
+    clickhouse.ts             read-only query layer (runSelect / describeTable) + pooled per-connection clients
+    catalog.ts                cached warehouse catalog (partitioned per connection)
     profile.ts                samples categorical column values for the analyst
-    write.ts                  HTTP write transport (chExec) for the manual store + graph snapshot
+    parsers.ts                CSV / TSV / Excel / JSON → rows + ClickHouse type inference
+    ingest.ts                 attached file → typed MergeTree table (naming, dedup, DDL, bulk insert)
+    write.ts                  HTTP write transport (chExec) for ingest, the manual store + graph snapshot
 ```

@@ -1,15 +1,18 @@
 "use client";
 
 // ChatPanel (left pane) - the conversation surface: composer, transcript, live
-// reasoning-step chips, and settings. Mounted by app/page.tsx, which owns the state
-// and the onSend callback. Reads GET /api/db-info for the warehouse connection banner.
+// reasoning-step chips, file attachment, and settings. Mounted by app/page.tsx, which owns
+// the state and the onSend/onUpload callbacks, and passes down the linked-warehouse summary
+// that the Settings popover shows (and lets the user disconnect from).
 
 import { useEffect, useRef, useState } from "react";
 import type { UITurn, AgentBlock } from "@/lib/types";
+import type { ConnectionInfo } from "@/hooks/useConnection";
 import {
   SendIcon,
   SparkIcon,
   PanelLeftIcon,
+  PaperclipIcon,
   GearIcon,
   MoonIcon,
   SunIcon,
@@ -20,6 +23,7 @@ import {
   ChartIcon,
   CodeIcon,
   GraphIcon,
+  PlugIcon,
 } from "./icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { PropertySearchIcon } from "@hugeicons/core-free-icons";
@@ -41,33 +45,45 @@ function Narration({ text }: { text: string }) {
   );
 }
 
+/** File types the attach button accepts - mirrors SUPPORTED_EXTENSIONS in lib/db/ingest.ts. */
+const ACCEPTED_FILES = ".csv,.tsv,.xlsx,.xls,.json,.jsonl,.ndjson";
+
 export default function ChatPanel({
   turns,
   isRunning,
   onSend,
+  onUpload,
   onToggleCollapse,
   activeVersion,
   onSelectVersion,
   theme,
   onToggleTheme,
   onClearChat,
+  connection,
+  onOpenTour,
+  onDisconnect,
   showCollapseButton,
 }: {
   turns: UITurn[];
   isRunning: boolean;
   onSend: (text: string) => void;
+  onUpload: (file: File) => void;
   onToggleCollapse: () => void;
   activeVersion: number;
   onSelectVersion: (i: number) => void;
   theme: "light" | "dark";
   onToggleTheme: () => void;
   onClearChat: () => void;
+  connection: ConnectionInfo | null;
+  onOpenTour: () => void;
+  onDisconnect: () => void;
   showCollapseButton?: boolean;
 }) {
   const [draft, setDraft] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [dbInfo, setDbInfo] = useState<{ host: string; database: string } | null>(null);
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -82,18 +98,12 @@ export default function ChatPanel({
         !settingsButtonRef.current.contains(e.target as Node)
       ) {
         setSettingsOpen(false);
+        setConfirmDisconnect(false);
       }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [settingsOpen]);
-
-  useEffect(() => {
-    fetch("/api/db-info")
-      .then((res) => res.json())
-      .then((data) => setDbInfo(data))
-      .catch(() => {});
-  }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -106,10 +116,23 @@ export default function ChatPanel({
     onSend(t);
   };
 
+  const pickFile = () => fileRef.current?.click();
   const empty = turns.length === 0;
 
   return (
     <div className="glass flex h-full flex-col md:rounded-3xl md:shadow-lg overflow-hidden">
+      <input
+        ref={fileRef}
+        type="file"
+        accept={ACCEPTED_FILES}
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) onUpload(f);
+          e.target.value = "";
+        }}
+      />
+
       {/* header */}
       <div className={`p-3 md:p-3.5 pb-1 shrink-0 ${settingsOpen ? "relative z-40" : "relative z-10"}`}>
         <div className="glass-chrome flex h-14 items-center gap-2.5 rounded-2xl border border-line px-4 shadow-sm relative">
@@ -185,14 +208,65 @@ export default function ChatPanel({
                   <DatabaseIcon className="mt-0.5 h-4 w-4 shrink-0 text-ink-soft" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-[12px] font-bold text-ink-soft truncate">{dbInfo?.database || "default"}</span>
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)] shrink-0" title="Connected" />
+                      <span className="text-[12px] font-bold text-ink-soft truncate">{connection?.database ?? "—"}</span>
+                      {connection?.connected && (
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]" title="Connected" />
+                      )}
                     </div>
-                    <div className="text-[10.5px] text-ink-faint truncate font-mono mt-0.5" title={dbInfo?.host || "localhost"}>
-                      {dbInfo?.host || "Connecting..."}
+                    <div className="mt-0.5 truncate font-mono text-[10.5px] text-ink-faint" title={connection?.host}>
+                      {connection?.host ?? "Not connected"}
                     </div>
                   </div>
                 </div>
+
+                {/* Disconnecting is destructive-ish (the link is forgotten and the tour comes
+                    back), so it asks once rather than firing on the first click. */}
+                {confirmDisconnect ? (
+                  <div className="flex flex-col gap-2 rounded-xl border border-rose-500/25 bg-rose-500/[0.06] p-2.5 animate-fade-up">
+                    <p className="text-[11.5px] leading-relaxed text-ink-soft">
+                      Scout will forget these details. Your data and tables are untouched.
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          setConfirmDisconnect(false);
+                          setSettingsOpen(false);
+                          onDisconnect();
+                        }}
+                        className="flex-1 cursor-pointer rounded-lg bg-rose-500 py-1.5 text-[12px] font-bold text-white transition-all hover:brightness-105 active:scale-[0.98]"
+                      >
+                        Disconnect
+                      </button>
+                      <button
+                        onClick={() => setConfirmDisconnect(false)}
+                        className="flex-1 cursor-pointer rounded-lg border border-line py-1.5 text-[12px] font-semibold text-ink-soft transition-colors hover:bg-black/5 dark:hover:bg-white/10"
+                      >
+                        Keep
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        setSettingsOpen(false);
+                        onOpenTour();
+                      }}
+                      className="flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-line py-1.5 text-[12px] font-semibold text-ink-soft transition-colors hover:bg-black/5 dark:hover:bg-white/10"
+                    >
+                      <PlugIcon className="h-3.5 w-3.5" />
+                      {connection?.connected ? "Change" : "Connect"}
+                    </button>
+                    {connection?.connected && (
+                      <button
+                        onClick={() => setConfirmDisconnect(true)}
+                        className="flex-1 cursor-pointer rounded-lg border border-line py-1.5 text-[12px] font-semibold text-ink-soft transition-colors hover:border-rose-500/30 hover:bg-rose-500/[0.07] hover:text-rose-500"
+                      >
+                        Disconnect
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* reset */}
@@ -215,7 +289,7 @@ export default function ChatPanel({
 
       {/* transcript */}
       <div ref={scrollRef} className="flex-1 space-y-5 overflow-y-auto px-5 py-5">
-        {empty && <EmptyState onPick={onSend} />}
+        {empty && <EmptyState onPick={onSend} onUploadClick={pickFile} database={connection?.database} />}
 
         {turns.map((turn, i) =>
           turn.role === "user" ? (
@@ -254,6 +328,14 @@ export default function ChatPanel({
       {/* composer */}
       <div className="p-3 md:p-3.5 pt-1 shrink-0">
         <div className="glass-chrome flex items-end gap-1.5 rounded-2xl px-3 py-2 md:gap-2.5 md:px-4 md:py-2.5 transition-all focus-within:border-brand focus-within:ring-4 focus-within:ring-brand/20 dark:focus-within:ring-brand/35 shadow-sm border border-line">
+          <button
+            onClick={pickFile}
+            disabled={isRunning}
+            title="Attach a data file (CSV, TSV, Excel, JSON)"
+            className="flex h-9 w-9 md:h-10 md:w-10 shrink-0 cursor-pointer items-center justify-center rounded-xl bg-brand-50 text-brand hover:bg-brand-100 dark:bg-brand-950/35 dark:text-brand-light dark:hover:bg-brand-950/50 transition-colors disabled:bg-zinc-100 dark:disabled:bg-zinc-800 disabled:text-zinc-400 dark:disabled:text-zinc-600 disabled:cursor-not-allowed"
+          >
+            <PaperclipIcon className="h-5 w-5 md:h-[22px] md:w-[22px]" />
+          </button>
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -280,20 +362,33 @@ export default function ChatPanel({
   );
 }
 
+// Openers that work on any warehouse, since Scout knows nothing about the schema a visitor
+// linked until it maps it. Each one is designed to teach the user something about their own
+// data on the first question.
 const SUGGESTIONS = [
-  "How many high value customers turned dormant? Check the 2026 Jan cohort.",
-  "What's the average credit score by customer value band?",
-  "What does our loan book look like? Break it down by DPD buckets.",
-  "Find customers with high fraud risk who are also priority customers.",
+  "What's in this warehouse? Map the tables and how they connect.",
+  "Profile the largest table - key columns, ranges, and anything unusual.",
+  "Find a date column and show me how the numbers trend over time.",
+  "Which two tables are most strongly related, and what does joining them reveal?",
 ];
 
-function EmptyState({ onPick }: { onPick: (t: string) => void }) {
+function EmptyState({
+  onPick,
+  onUploadClick,
+  database,
+}: {
+  onPick: (t: string) => void;
+  onUploadClick: () => void;
+  database?: string;
+}) {
   return (
     <div className="flex flex-col items-center justify-center text-center gap-6 py-8 px-4 animate-fade-up">
       <div>
         <h2 className="text-[22px] font-extrabold tracking-tight text-ink">Ask your data anything</h2>
         <p className="mt-2.5 max-w-sm text-[13.5px] leading-relaxed text-ink-soft">
-          You&apos;re connected to your ClickHouse warehouse. Just ask a question to start - Scout discovers the schema, writes the SQL, and builds a dashboard.
+          You&apos;re connected to{" "}
+          <strong className="font-semibold text-ink">{database ?? "your ClickHouse warehouse"}</strong>. Ask a
+          question to start - Scout discovers the schema, writes the SQL, and builds a dashboard.
         </p>
       </div>
 
@@ -311,6 +406,15 @@ function EmptyState({ onPick }: { onPick: (t: string) => void }) {
           </button>
         ))}
       </div>
+
+      {/* bring in data that isn't in the warehouse yet */}
+      <button
+        onClick={onUploadClick}
+        className="flex items-center gap-2 text-[12px] font-semibold text-ink-faint transition-colors hover:text-brand cursor-pointer"
+      >
+        <PaperclipIcon className="h-4 w-4" />
+        or attach a file that isn&apos;t in the warehouse yet (CSV, Excel, JSON)
+      </button>
     </div>
   );
 }

@@ -11,6 +11,9 @@ interface GEdge {
   a: string; b: string; aCol: string; bCol: string;
   source: "declared" | "inferred"; connection?: "physical" | "manual";
   overlap?: number; verified?: boolean;
+  /** True when the join column is a hub - carried by so many tables that drawing it at full
+   *  weight would turn the canvas into a starburst. Derived per schema, server-side. */
+  hub?: boolean;
 }
 
 // Edges are differentiated by CONNECTION KIND (colour) and VERIFICATION (line style):
@@ -20,27 +23,58 @@ const PHYSICAL = "47,107,255"; // blue
 const MANUAL = "139,92,246";   // violet
 const connOf = (e: GEdge) => e.connection ?? (e.source === "inferred" ? "physical" : "manual");
 
-const DOMAIN_COLORS: Record<string, string> = {
-  "Customer": "#2f6bff", "Accounts & cards": "#06b6d4", "Payments & rewards": "#22c55e",
-  "Lending": "#f59e0b", "Risk & compliance": "#ef4444", "Merchants": "#8b5cf6",
-  "Engagement": "#ec4899", "Branch & staff": "#14b8a6", "Other": "#64748b",
-};
-const DOMAIN_ORDER = ["Customer", "Accounts & cards", "Payments & rewards", "Lending", "Risk & compliance", "Merchants", "Engagement", "Branch & staff", "Other"];
+// Domains are derived from whatever schema the user linked, so colours are assigned by
+// position rather than looked up by name. "Other" (the ungrouped tables) is always grey.
+const DOMAIN_PALETTE = ["#2f6bff", "#06b6d4", "#22c55e", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6", "#eab308", "#0ea5e9"];
+const OTHER_COLOR = "#64748b";
 
 const W = 920, H = 660, CX = 460, CY = 322, R = 212;
-const HUB = new Set(["customer_id", "city"]); // de-emphasised so the hub doesn't dominate the layout
 
 export default function GraphCanvas({ nodes, edges }: { nodes: GNode[]; edges: GEdge[] }) {
   const [hover, setHover] = useState<string | null>(null);
 
-  // One cluster per sub-domain around the canvas, the customers hub pinned at the centre.
+  // Stable domain order (largest cluster first, "Other" last) and the colour for each.
+  const domains = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const n of nodes) counts.set(n.domain, (counts.get(n.domain) ?? 0) + 1);
+    const names = [...counts.keys()]
+      .filter((d) => d !== "Other")
+      .sort((a, b) => (counts.get(b)! - counts.get(a)!) || a.localeCompare(b));
+    if (counts.has("Other")) names.push("Other");
+    return names.map((name, i) => ({
+      name,
+      color: name === "Other" ? OTHER_COLOR : DOMAIN_PALETTE[i % DOMAIN_PALETTE.length],
+    }));
+  }, [nodes]);
+
+  const colorOf = useMemo(
+    () => new Map(domains.map((d) => [d.name, d.color])),
+    [domains],
+  );
+
+  // The most-connected table anchors the centre - in any schema that's the table everything
+  // else hangs off, and pinning it keeps the clusters from tangling around it.
+  const centerNode = useMemo(() => {
+    const degree = new Map<string, number>();
+    for (const e of edges) {
+      degree.set(e.a, (degree.get(e.a) ?? 0) + 1);
+      degree.set(e.b, (degree.get(e.b) ?? 0) + 1);
+    }
+    let best: string | null = null;
+    for (const n of nodes) {
+      const d = degree.get(n.id) ?? 0;
+      if (d >= 3 && (best === null || d > (degree.get(best) ?? 0))) best = n.id;
+    }
+    return best;
+  }, [nodes, edges]);
+
+  // One cluster per domain around the canvas, the hub table pinned at the centre.
   const pos = useMemo(() => {
     const m = new Map<string, { x: number; y: number }>();
-    const domains = DOMAIN_ORDER.filter((d) => nodes.some((n) => n.domain === d));
     domains.forEach((dom, di) => {
       const ang = -Math.PI / 2 + (2 * Math.PI * di) / domains.length;
       const cc = { x: CX + R * Math.cos(ang), y: CY + R * Math.sin(ang) };
-      const ns = nodes.filter((n) => n.domain === dom && n.id !== "customers");
+      const ns = nodes.filter((n) => n.domain === dom.name && n.id !== centerNode);
       const k = ns.length;
       ns.forEach((n, j) => {
         if (k === 1) { m.set(n.id, cc); return; }
@@ -49,9 +83,9 @@ export default function GraphCanvas({ nodes, edges }: { nodes: GNode[]; edges: G
         m.set(n.id, { x: cc.x + rk * Math.cos(a2), y: cc.y + rk * Math.sin(a2) });
       });
     });
-    m.set("customers", { x: CX, y: CY });
+    if (centerNode) m.set(centerNode, { x: CX, y: CY });
     return m;
-  }, [nodes]);
+  }, [nodes, domains, centerNode]);
 
   const neighbors = new Set<string>();
   if (hover) for (const e of edges) { if (e.a === hover) neighbors.add(e.b); if (e.b === hover) neighbors.add(e.a); }
@@ -63,7 +97,7 @@ export default function GraphCanvas({ nodes, edges }: { nodes: GNode[]; edges: G
           {edges.map((e, i) => {
             const pa = pos.get(e.a), pb = pos.get(e.b);
             if (!pa || !pb) return null;
-            const hub = HUB.has(e.aCol) || HUB.has(e.bCol);
+            const hub = !!e.hub;
             const inc = hover && (e.a === hover || e.b === hover);
             const rgb = connOf(e) === "physical" ? PHYSICAL : MANUAL; // colour = connection kind
             const verified = e.verified === true;                     // line style = verification
@@ -83,7 +117,7 @@ export default function GraphCanvas({ nodes, edges }: { nodes: GNode[]; edges: G
           {nodes.map((n) => {
             const p = pos.get(n.id);
             if (!p) return null;
-            const color = DOMAIN_COLORS[n.domain] || "#64748b";
+            const color = colorOf.get(n.domain) ?? OTHER_COLOR;
             const r = 5 + Math.min(11, Math.log10(n.rowCount + 10) * 2.6);
             const dim = hover && hover !== n.id && !neighbors.has(n.id);
             const showLabel = !hover || hover === n.id || neighbors.has(n.id) || n.rowCount > 500000;
@@ -103,10 +137,10 @@ export default function GraphCanvas({ nodes, edges }: { nodes: GNode[]; edges: G
         <div>
           <div className="mb-3 text-[11px] font-bold uppercase tracking-wider text-ink-faint">Sub-domains</div>
           <div className="flex flex-wrap gap-x-4 gap-y-2.5 md:flex-col">
-            {DOMAIN_ORDER.filter((d) => nodes.some((n) => n.domain === d)).map((d) => (
-              <span key={d} className="flex items-center gap-2.5 text-[12.5px] font-medium text-ink-soft">
-                <span className="h-3 w-3 shrink-0 rounded-full" style={{ background: DOMAIN_COLORS[d] }} />
-                {d}
+            {domains.map((d) => (
+              <span key={d.name} className="flex items-center gap-2.5 text-[12.5px] font-medium text-ink-soft">
+                <span className="h-3 w-3 shrink-0 rounded-full" style={{ background: d.color }} />
+                {d.name}
               </span>
             ))}
           </div>

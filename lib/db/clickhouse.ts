@@ -1,38 +1,106 @@
 import { createClient, type ClickHouseClient } from "@clickhouse/client";
+import { connectionKey, currentConnection, databaseName, type Connection } from "./connection";
 
-// Read-only data access layer. The agent may only run SELECT / DESCRIBE / SHOW;
-// assertReadOnly enforces this before every query so a misbehaving prompt can never
-// mutate the warehouse. The single client is created once and reused. The schema cache
-// lives in catalog.ts; the write transport (CREATE/INSERT) lives in write.ts (chExec).
+// Read-only data access layer, scoped to the connection the visitor linked (connection.ts).
+// The agent may only run SELECT / DESCRIBE / SHOW; assertReadOnly enforces this before every
+// query so a misbehaving prompt can never mutate someone's warehouse. Clients are pooled per
+// connection so a returning visitor reuses a warm socket. The schema cache lives in
+// catalog.ts; the write transport (CREATE/INSERT) lives in write.ts (chExec).
 
-let _client: ClickHouseClient | null = null;
-
-/** The configured database name (defaults to "default"). */
+/** The configured database name for the active connection. */
 export function dbName(): string {
-  return process.env.CLICKHOUSE_DATABASE || "default";
+  return databaseName();
 }
 
-/** The one shared ClickHouse connection. Created on first use, reused forever. */
-export function getClient(): ClickHouseClient {
-  if (_client) return _client;
-  const url = process.env.CLICKHOUSE_HOST;
-  if (!url) throw new Error("CLICKHOUSE_HOST is not set");
-  _client = createClient({
-    url,
-    username: process.env.CLICKHOUSE_USER || "default",
-    password: process.env.CLICKHOUSE_PASSWORD || "",
-    database: dbName(),
-    request_timeout: 120_000,
+// One client per linked connection, kept warm across requests. Bounded so a busy public
+// deployment can't accumulate sockets for every warehouse anyone ever tried.
+const MAX_POOLED_CLIENTS = 24;
+const _clients = new Map<string, ClickHouseClient>();
+
+/** Ceiling on the setup tour's connection test (see pingConnection). */
+const PING_TIMEOUT_MS = 25_000;
+
+function buildClient(conn: Connection, requestTimeoutMs = 120_000): ClickHouseClient {
+  return createClient({
+    url: conn.url,
+    username: conn.username || "default",
+    password: conn.password || "",
+    database: conn.database,
+    request_timeout: requestTimeoutMs,
     // Keep the underlying socket warm so a power user firing many questions in a
     // row reuses one connection instead of paying TCP/TLS setup each time.
     keep_alive: { enabled: true },
-    clickhouse_settings: {
-      // Defense-in-depth: readonly=2 lets us read (incl. system tables) and tune
-      // per-query settings, but blocks any write/DDL at the server.
-      readonly: "2",
-    },
+    // Defense-in-depth: readonly=2 lets us read (incl. system tables) and tune per-query
+    // settings, but blocks any write/DDL at the server. Omitted when the user is already
+    // pinned read-only server-side, because such a server refuses the settings change and
+    // would fail every query - and its own readonly is at least as strict anyway.
+    clickhouse_settings: conn.readonlyLocked ? undefined : { readonly: "2" },
   });
-  return _client;
+}
+
+/** The pooled ClickHouse client for the active connection. */
+export function getClient(): ClickHouseClient {
+  const conn = currentConnection();
+  const k = connectionKey(conn);
+  const hit = _clients.get(k);
+  if (hit) return hit;
+
+  // Evict the least-recently-created client once the pool is full (Map preserves insertion order).
+  if (_clients.size >= MAX_POOLED_CLIENTS) {
+    const oldest = _clients.keys().next().value;
+    if (oldest) {
+      _clients.get(oldest)?.close().catch(() => {});
+      _clients.delete(oldest);
+    }
+  }
+
+  const client = buildClient(conn);
+  _clients.set(k, client);
+  return client;
+}
+
+/** Drop the pooled client for a connection (called on disconnect). */
+export function releaseClient(conn: Connection): void {
+  const k = connectionKey(conn);
+  _clients.get(k)?.close().catch(() => {});
+  _clients.delete(k);
+}
+
+/** ClickHouse's refusal when the user is already pinned read-only and we try to set readonly=2. */
+const READONLY_LOCKED = /cannot modify ['"]?readonly['"]? setting/i;
+
+/** One trivial query on a throwaway client. Returns the server version, or throws. */
+async function tryPing(conn: Connection): Promise<string> {
+  // Short timeout: a typo in the host should come back in seconds, not after the analytics
+  // client's two-minute ceiling. Long enough that an idle Cloud service still has time to wake.
+  const client = buildClient(conn, PING_TIMEOUT_MS);
+  try {
+    const rs = await client.query({ query: "SELECT version() AS v", format: "JSON" });
+    const json = (await rs.json()) as { data?: { v?: string }[] };
+    return String(json.data?.[0]?.v ?? "unknown");
+  } finally {
+    await client.close().catch(() => {});
+  }
+}
+
+/**
+ * Test a connection's credentials before anything is remembered, so the setup tour can report
+ * "connected" or the exact ClickHouse error.
+ *
+ * Also settles how Scout must talk to this server. A user who is already `readonly=1` - the
+ * hardened setup the tour actively recommends - rejects our own `readonly=2` and would fail
+ * every single query. Detect that here and hand back a Connection that stops sending it; the
+ * server's own restriction is at least as strict, so nothing is loosened.
+ */
+export async function pingConnection(conn: Connection): Promise<{ version: string; connection: Connection }> {
+  try {
+    return { version: await tryPing(conn), connection: conn };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!READONLY_LOCKED.test(msg)) throw e;
+    const locked = { ...conn, readonlyLocked: true };
+    return { version: await tryPing(locked), connection: locked };
+  }
 }
 
 /**

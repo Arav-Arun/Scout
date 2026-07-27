@@ -7,6 +7,7 @@
 // per column, concurrency-bounded, and fail-open. Called by the ANALYZE phase (phases.ts).
 
 import { runSelect, type TableInfo } from "./clickhouse";
+import { connectionKey } from "./connection";
 
 /** Distinct values sampled for one categorical column. */
 export interface ColumnValues {
@@ -28,7 +29,15 @@ const CONCURRENCY = 8;
 const TTL_MS = 30 * 60_000;
 
 const _cache = new Map<string, { values: string[]; more: boolean; at: number }>();
-const keyOf = (table: string, col: string) => `${table}\u0000${col}`;
+// Namespaced by connection: two visitors can have a `status` column holding entirely different values.
+const keyOf = (table: string, col: string) => `${connectionKey()}\u0000${table}\u0000${col}`;
+
+/** Drop the sampled values for a connection (called on disconnect). */
+export function forgetProfiles(key: string): void {
+  for (const k of _cache.keys()) {
+    if (k.startsWith(`${key}\u0000`)) _cache.delete(k);
+  }
+}
 
 /** Categorical columns are stored as LowCardinality (by both the inference and the seeder). */
 function isCategorical(type: string): boolean {

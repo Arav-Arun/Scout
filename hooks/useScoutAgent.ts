@@ -1,6 +1,6 @@
 // useScoutAgent - owns the client-side agent state: conversation turns, dashboard
-// versions, and streaming. Consumes POST /api/chat, reading an NDJSON stream of
-// ScoutEvent (lib/types.ts).
+// versions, streaming, and file upload. Consumes POST /api/chat and POST /api/upload,
+// reading an NDJSON stream of ScoutEvent (lib/types.ts).
 
 "use client";
 
@@ -15,10 +15,22 @@ export interface ScoutAgent {
   isRunning: boolean;
   setActiveVersion: (i: number) => void;
   send: (text: string) => void;
+  uploadFile: (file: File) => void;
   clearChat: () => void;
 }
 
-export function useScoutAgent(): ScoutAgent {
+/** Human-readable byte size for the ingest progress chip. */
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * @param onDisconnected called when the server reports the link is gone (HTTP 428), so the
+ *        page can drop straight back to the setup tour instead of failing every request.
+ */
+export function useScoutAgent(onDisconnected?: () => void): ScoutAgent {
   const [turns, setTurns] = useState<UITurn[]>([]);
   const [versions, setVersions] = useState<DashboardVersion[]>([]);
   const [activeVersion, setActiveVersion] = useState(0);
@@ -134,6 +146,10 @@ export function useScoutAgent(): ScoutAgent {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ messages: apiMessages }),
         });
+        if (res.status === 428) {
+          onDisconnected?.();
+          throw new Error("Your database link has expired. Reconnect to keep asking questions.");
+        }
         if (!res.body) throw new Error("No response stream");
 
         const reader = res.body.getReader();
@@ -168,7 +184,92 @@ export function useScoutAgent(): ScoutAgent {
         setIsRunning(false);
       }
     },
-    [isRunning, patchAssistant],
+    [isRunning, patchAssistant, onDisconnected],
+  );
+
+  // Upload a file, then auto-ask the agent to profile the new table.
+  const uploadFile = useCallback(
+    async (file: File) => {
+      if (isRunning) return;
+      setIsRunning(true);
+      const uploadStepId = `up_${Date.now()}`;
+      const startedAt = Date.now();
+      const sizeLabel = formatBytes(file.size);
+
+      setTurns((t) => [
+        ...t,
+        { role: "user", text: `📎 ${file.name}` },
+        {
+          role: "assistant",
+          blocks: [
+            { type: "step", id: uploadStepId, kind: "discover", status: "running", label: `Ingesting ${file.name}`, detail: `${sizeLabel} · 0s` },
+          ],
+        },
+      ]);
+
+      // Merge a partial update into the upload step block (status/label/detail).
+      const updateStep = (patch: Partial<Extract<AgentBlock, { type: "step" }>>) => {
+        setTurns((t) => {
+          const copy = [...t];
+          const last = copy[copy.length - 1];
+          if (!last || last.role !== "assistant") return t;
+          const blocks = (last.blocks ?? []).map((b) =>
+            b.type === "step" && b.id === uploadStepId ? { ...b, ...patch } : b,
+          );
+          copy[copy.length - 1] = { ...last, blocks };
+          return copy;
+        });
+      };
+
+      // Tick a live elapsed timer so a long ingest never looks frozen.
+      const timer = setInterval(
+        () => updateStep({ detail: `${sizeLabel} · ${Math.round((Date.now() - startedAt) / 1000)}s` }),
+        1000,
+      );
+      // Fail fast: abort a hung request (e.g. the dev server died) instead of spinning forever.
+      const controller = new AbortController();
+      const UPLOAD_TIMEOUT_MS = 180_000;
+      const timeout = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+
+      try {
+        const fd = new FormData();
+        fd.append("file", file);
+        const res = await fetch("/api/upload", { method: "POST", body: fd, signal: controller.signal });
+        if (res.status === 428) {
+          onDisconnected?.();
+          throw new Error("Your database link has expired. Reconnect, then attach the file again.");
+        }
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Upload failed");
+        const detail = `${data.table} · ${Number(data.rowCount).toLocaleString()} rows`;
+        updateStep({ status: "done", label: data.alreadyExists ? "Already in the warehouse (skipped upload)" : "Ingested into ClickHouse", detail });
+        setIsRunning(false);
+        send(
+          `Analyse the newly uploaded table \`${data.table}\` (from the file "${file.name}", ${data.rowCount} rows). Profile it and summarise the key findings with charts.`,
+        );
+      } catch (e) {
+        const msg = controller.signal.aborted
+          ? `No response after ${UPLOAD_TIMEOUT_MS / 1000}s - the file may be too large, or the server went away.`
+          : e instanceof Error ? e.message : String(e);
+        updateStep({ status: "error", label: controller.signal.aborted ? "Ingestion timed out" : "Ingestion failed", detail: msg.slice(0, 140) });
+        setTurns((t) => {
+          const copy = [...t];
+          const last = copy[copy.length - 1];
+          if (last?.role === "assistant") {
+            copy[copy.length - 1] = {
+              ...last,
+              blocks: [...(last.blocks ?? []), { type: "text", text: `⚠️ ${msg}` }],
+            };
+          }
+          return copy;
+        });
+        setIsRunning(false);
+      } finally {
+        clearInterval(timer);
+        clearTimeout(timeout);
+      }
+    },
+    [isRunning, send, onDisconnected],
   );
 
   return {
@@ -178,6 +279,7 @@ export function useScoutAgent(): ScoutAgent {
     isRunning,
     setActiveVersion,
     send,
+    uploadFile,
     clearChat,
   };
 }

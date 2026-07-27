@@ -7,7 +7,7 @@
 export interface HeroMetric {
   /** Uppercase caption, e.g. "TURNED DORMANT". */
   label: string;
-  /** The headline value, e.g. "6" or "147.0" or "₹1.2Cr". */
+  /** The headline value, e.g. "6", "147.0", "162.90M". */
   value: string;
   /** Optional emphasis sub-label, e.g. "13.3%". */
   sub?: string;

@@ -1,12 +1,15 @@
 "use client";
 
-// Home (app/page.tsx) - layout shell only; agent state lives in hooks/useScoutAgent.ts.
-// Handles desktop/mobile layout switching, theme toggle + persistence (see the pre-paint
-// script in app/layout.tsx), sidebar resize, and rendering ChatPanel + DashboardPanel.
+// Home (app/page.tsx) - layout shell only; agent state lives in hooks/useScoutAgent.ts and
+// the warehouse link in hooks/useConnection.ts. Handles desktop/mobile layout switching,
+// theme toggle + persistence (see the pre-paint script in app/layout.tsx), sidebar resize,
+// the first-run setup tour, and rendering ChatPanel + DashboardPanel.
 
 import { useCallback, useEffect, useRef, useState, memo } from "react";
 import ChatPanel from "@/components/ChatPanel";
+import ConnectTour from "@/components/ConnectTour";
 import DashboardPanel from "@/components/DashboardPanel";
+import { useConnection } from "@/hooks/useConnection";
 import { useScoutAgent } from "@/hooks/useScoutAgent";
 
 type Theme = "light" | "dark";
@@ -17,7 +20,14 @@ const MIN_SIDEBAR_W = 320;
 const MAX_SIDEBAR_W = 640;
 
 export default function Home() {
-  const agent = useScoutAgent();
+  const connection = useConnection();
+  const { markDisconnected } = connection;
+  const agent = useScoutAgent(markDisconnected);
+
+  // The tour opens by itself when nothing is linked, and on demand from Settings (where it
+  // jumps straight to the form - a returning user re-linking doesn't need the pitch again).
+  const [tourOpen, setTourOpen] = useState(false);
+  const [tourStep, setTourStep] = useState(0);
 
   const [chatCollapsed, setChatCollapsed] = useState(false);
   const [theme, setTheme] = useState<Theme>("light");
@@ -97,6 +107,31 @@ export default function Home() {
     setMobileDashboardBadge(false);
   }, [agent]);
 
+  // Unlinking wipes the conversation too: the transcript and dashboards belong to the
+  // warehouse that produced them, and would be meaningless against the next one.
+  const handleDisconnect = useCallback(async () => {
+    await connection.disconnect();
+    agent.clearChat();
+    setMobileTab("chat");
+    setMobileDashboardBadge(false);
+  }, [connection, agent]);
+
+  const status = connection.info;
+  const connected = !!status?.connected;
+
+  // Nothing linked ⇒ the tour IS the app, opened from the top and not dismissible.
+  useEffect(() => {
+    if (status && !status.connected) {
+      setTourStep(0);
+      setTourOpen(true);
+    }
+  }, [status]);
+
+  const openTour = useCallback(() => {
+    setTourStep(connected ? 2 : 0);
+    setTourOpen(true);
+  }, [connected]);
+
   return (
     <main className="relative flex h-[100dvh] w-screen overflow-hidden md:p-3.5 md:gap-3.5">
       {/* Desktop layout (md+): resizable side-by-side */}
@@ -111,12 +146,16 @@ export default function Home() {
           turns={agent.turns}
           isRunning={agent.isRunning}
           onSend={agent.send}
+          onUpload={agent.uploadFile}
           onToggleCollapse={() => setChatCollapsed(true)}
           activeVersion={agent.activeVersion}
           onSelectVersion={agent.setActiveVersion}
           theme={theme}
           onToggleTheme={toggleTheme}
           onClearChat={handleClearChat}
+          connection={status}
+          onOpenTour={openTour}
+          onDisconnect={handleDisconnect}
           showCollapseButton
         />
         {/* Drag handle */}
@@ -149,6 +188,7 @@ export default function Home() {
               turns={agent.turns}
               isRunning={agent.isRunning}
               onSend={agent.send}
+              onUpload={agent.uploadFile}
               onToggleCollapse={() => {}}
               activeVersion={agent.activeVersion}
               onSelectVersion={(i) => {
@@ -158,6 +198,9 @@ export default function Home() {
               theme={theme}
               onToggleTheme={toggleTheme}
               onClearChat={handleClearChat}
+              connection={status}
+              onOpenTour={openTour}
+              onDisconnect={handleDisconnect}
             />
           ) : (
             <DashboardPanel
@@ -177,6 +220,17 @@ export default function Home() {
           badge={mobileDashboardBadge}
         />
       </div>
+
+      {/* First run (and "Change" from Settings): link a ClickHouse before anything else works. */}
+      {tourOpen && (
+        <ConnectTour
+          info={status}
+          onConnect={connection.connect}
+          onClose={() => setTourOpen(false)}
+          dismissible={connected}
+          initialStep={tourStep}
+        />
+      )}
     </main>
   );
 }

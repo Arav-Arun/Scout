@@ -115,20 +115,22 @@ function fmtCount(n: number): string {
 }
 
 /**
- * Exact crore/lakh rendering of a magnitude (1 Cr = 1e7, 1 L = 1e5), computed in code so the
- * model copies the right figure instead of re-scaling in its head - a hand R/1e7 conversion is
- * how a hero metric ended up 10x too large.
+ * Exact short-scale rendering of a magnitude (K = 1e3, M = 1e6, B = 1e9), computed in code so
+ * the model copies the right figure instead of re-scaling in its head - a hand division is how
+ * a hero metric ended up 10x too large. Short scale rather than a locale-specific one (lakh /
+ * crore, 万 / 億): Scout has no idea whose warehouse it is looking at.
  */
-function inrScale(n: number): string {
+function magnitude(n: number): string {
   const a = Math.abs(n);
-  if (a >= 1e7) return `${(n / 1e7).toFixed(2)} Cr`;
-  if (a >= 1e5) return `${(n / 1e5).toFixed(2)} L`;
+  if (a >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
+  if (a >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (a >= 1e4) return `${(n / 1e3).toFixed(2)}K`;
   return "";
 }
 
-/** A raw number followed by its exact Cr/L scale when large, e.g. "162904098 (16.29 Cr)". */
+/** A raw number followed by its exact scale when large, e.g. "162904098 (162.90M)". */
 function withScale(n: number): string {
-  const s = inrScale(n);
+  const s = magnitude(n);
   return s ? `${n} (${s})` : `${n}`;
 }
 
@@ -165,7 +167,7 @@ function columnAggregates(rows: Record<string, unknown>[], rowCount: number): st
   const scope = complete
     ? `all ${rowCount} returned rows`
     : `ONLY the first ${rows.length} of ${rowCount} rows (NOT a grand total)`;
-  return `\nColumn aggregates over ${scope} - use these EXACT values, including the Cr/L scale shown, verbatim; do NOT add rows or re-scale yourself: ${parts.join("; ")}`;
+  return `\nColumn aggregates over ${scope} - use these EXACT values, including the K/M/B scale shown, verbatim; do NOT add rows or re-scale yourself: ${parts.join("; ")}`;
 }
 
 /** Results gathered so far, trimmed for the model's context (+ exact column aggregates). */
