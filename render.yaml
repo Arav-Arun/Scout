@@ -1,0 +1,54 @@
+# Render Blueprint - https://render.com/docs/blueprint-spec
+#
+# Scout is a single stateless Next.js service: it stores nothing of its own, because each
+# visitor's warehouse credentials live in a sealed cookie in their own browser. That means no
+# database and no persistent disk to provision here - but it also means SCOUT_SECRET below is
+# load-bearing rather than optional. See the note on it.
+#
+# To deploy: Render Dashboard -> New -> Blueprint -> pick this repo. Render reads this file,
+# then prompts for the one secret it cannot generate (OPENAI_API_KEY).
+
+services:
+  - type: web
+    name: scout
+    runtime: node
+    # `free` also works and costs nothing, but a free instance spins down after ~15 minutes
+    # idle, and the cold start lands on top of ClickHouse Cloud's own wake-up - so the first
+    # question after a quiet spell is slow twice over. Worth `starter` for a live demo.
+    plan: starter
+    # Singapore is Render's closest region to ap-south-1 (Mumbai). Put Scout near the
+    # warehouse it queries: one question makes several round trips to ClickHouse.
+    region: singapore
+    branch: main
+
+    buildCommand: npm ci && npm run build
+    # Next reads PORT itself, but bind the host explicitly: a server listening only on
+    # localhost is the usual cause of a Render deploy that builds fine and then 502s.
+    startCommand: npm run start -- -H 0.0.0.0
+
+    healthCheckPath: /health
+
+    envVars:
+      # Pinned so a Render-side default bump can't silently change the build.
+      - key: NODE_VERSION
+        value: "22"
+
+      # Seals each visitor's ClickHouse credentials into their cookie (AES-256-GCM).
+      # generateValue creates this once and keeps it stable across deploys, which is the
+      # whole point: if it changes - or is unset, which falls back to a per-process key -
+      # every saved connection is invalidated and users must re-link their database after
+      # every restart. Do not replace this with a literal value in the repo.
+      - key: SCOUT_SECRET
+        generateValue: true
+
+      # Set in the Render dashboard; never committed.
+      - key: OPENAI_API_KEY
+        sync: false
+
+      - key: OPENAI_MODEL
+        value: gpt-4o
+
+      # Deliberately absent: SCOUT_ALLOW_PRIVATE_HOSTS.
+      # Leaving it unset keeps the SSRF guard on, so a public deployment cannot be pointed
+      # at Render's internal network or a cloud metadata endpoint. Set it to 1 only when
+      # self-hosting against a ClickHouse on your own machine or LAN.

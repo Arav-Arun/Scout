@@ -200,10 +200,27 @@ pinning them, so it does not defeat a determined DNS-rebinding attacker.
 
 ### 6. Deploy
 
-Scout is a standard Next.js app and runs on any Node host (it is deployed on Railway in
-production). Set `OPENAI_API_KEY` and `SCOUT_SECRET` on the host. `GET /health` is provided as a
-liveness probe. On serverless platforms, note that an analysis streams for up to a few minutes;
-the API route declares `maxDuration = 300`.
+Scout is a standard Next.js app and runs on any Node host. It holds no state of its own - each
+visitor's warehouse credentials live in a sealed cookie in their own browser - so there is no
+database or persistent disk to provision, and it scales horizontally as long as every instance
+shares the same `SCOUT_SECRET`.
+
+**Render** (blueprint included). Dashboard -> New -> Blueprint -> pick this repo, and
+[`render.yaml`](render.yaml) provisions the service. It generates `SCOUT_SECRET`, pins Node, and
+points the health check at `/health`; the only thing to enter by hand is `OPENAI_API_KEY`.
+
+**Anywhere else.** Build with `npm ci && npm run build`, start with
+`npm run start -- -H 0.0.0.0`, and set `OPENAI_API_KEY` and `SCOUT_SECRET`. `GET /health` is a
+liveness probe.
+
+Two things to get right wherever you host:
+
+- **`SCOUT_SECRET` must be set and stable**, at least 16 characters. It seals every saved
+  connection. Unset, Scout falls back to a per-process key and warns on startup - links then
+  break on every restart, redeploy, and scale event. Changing it later logs everyone out.
+- **The host must not cut a streaming response.** An analysis streams NDJSON for up to a few
+  minutes. Persistent hosts are fine as long as the proxy's idle timeout is respected, which
+  the per-phase events do. On serverless the API route declares `maxDuration = 300`.
 
 ---
 
